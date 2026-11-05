@@ -70,6 +70,8 @@ directories:
   API.
 - `components`: list components, versions, and licenses; create licenses,
   components, and versions; find applications that use a component.
+- `dependencies`: add, list, and remove dependency edges using the
+  `DEPENDENCY` composite key and schema constraints.
 - `vulnerabilities`: record a vulnerability and affected versions atomically,
   update remediation status, list findings with affected applications, and
   retrieve active finding data for graph integration.
