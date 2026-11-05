@@ -17,7 +17,11 @@ vi.mock("neo4j-driver", () => ({
   },
 }));
 
-import { getNeo4jDriver, withNeo4jSession } from "./neo4j";
+import {
+  getNeo4jDatabase,
+  getNeo4jDriver,
+  withNeo4jSession,
+} from "./neo4j";
 
 describe("Neo4j connection", () => {
   beforeEach(() => {
@@ -48,6 +52,12 @@ describe("Neo4j connection", () => {
     );
   });
 
+  it("uses the configured Neo4j database and defaults to neo4j", () => {
+    expect(getNeo4jDatabase()).toBe("neo4j");
+    vi.stubEnv("NEO4J_DATABASE", "sbom");
+    expect(getNeo4jDatabase()).toBe("sbom");
+  });
+
   it("rejects incomplete connection configuration", () => {
     vi.stubEnv("NEO4J_PASSWORD", " ");
 
@@ -62,6 +72,7 @@ describe("Neo4j connection", () => {
 
     await expect(withNeo4jSession(operation)).resolves.toBe("result");
     expect(createSession).toHaveBeenCalledOnce();
+    expect(createSession).toHaveBeenCalledWith({ database: "neo4j" });
     expect(closeSession).toHaveBeenCalledOnce();
   });
 

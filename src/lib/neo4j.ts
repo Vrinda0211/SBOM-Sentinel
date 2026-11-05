@@ -6,6 +6,11 @@ declare global {
   var neo4jDriver: Driver | undefined;
 }
 
+export function getNeo4jDatabase(): string {
+  const database = process.env.NEO4J_DATABASE?.trim();
+  return database || "neo4j";
+}
+
 export function getNeo4jDriver(): Driver {
   if (globalThis.neo4jDriver) {
     return globalThis.neo4jDriver;
@@ -23,8 +28,8 @@ export function getNeo4jDriver(): Driver {
   }
 
   globalThis.neo4jDriver = neo4j.driver(
-    NEO4J_URI,
-    neo4j.auth.basic(NEO4J_USERNAME, NEO4J_PASSWORD),
+    NEO4J_URI.trim(),
+    neo4j.auth.basic(NEO4J_USERNAME.trim(), NEO4J_PASSWORD),
   );
 
   return globalThis.neo4jDriver;
@@ -33,7 +38,9 @@ export function getNeo4jDriver(): Driver {
 export async function withNeo4jSession<T>(
   operation: (session: Session) => Promise<T>,
 ): Promise<T> {
-  const session = getNeo4jDriver().session();
+  const session = getNeo4jDriver().session({
+    database: getNeo4jDatabase(),
+  });
   let operationFailed = false;
   let operationError: unknown;
 
