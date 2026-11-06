@@ -19,6 +19,28 @@ export interface SbomRecord extends RowDataPacket {
   component_count: number;
 }
 
+export interface SbomGraphNode extends RowDataPacket {
+  component_id: string;
+  component_name: string;
+  component_version_id: string;
+  version_number: string;
+  application_id: string | null;
+  application_name: string | null;
+  vulnerability_id: string | null;
+  cve_id: string | null;
+  severity: string | null;
+}
+
+export interface SbomGraphEdge extends RowDataPacket {
+  source_component_version_id: string;
+  source_component_id: string;
+  source_component_name: string;
+  target_component_version_id: string;
+  target_component_id: string;
+  target_component_name: string;
+  dependency_scope: string | null;
+}
+
 export async function createSbom(input: CreateSbomInput): Promise<string> {
   requireUuid(input.applicationId, "Application ID");
   if (
@@ -75,4 +97,76 @@ export async function listSbomsForApplication(
     [applicationId],
   );
   return rows;
+}
+
+export async function getSbomGraphData(
+  sbomId: string,
+): Promise<{ nodes: SbomGraphNode[]; edges: SbomGraphEdge[] }> {
+  requireUuid(sbomId, "SBOM ID");
+
+  const [nodeRows] = await getMySqlPool().execute<SbomGraphNode[]>(
+    `SELECT
+       sc.component_version_id,
+       cv.component_id,
+       c.component_name,
+       cv.version_number,
+       s.application_id,
+       a.application_name,
+       v.vulnerability_id,
+       v.cve_id,
+       v.severity
+     FROM SBOM_CONTAINS AS sc
+     INNER JOIN COMPONENT_VERSION AS cv
+       ON cv.component_version_id = sc.component_version_id
+     INNER JOIN COMPONENT AS c
+       ON c.component_id = cv.component_id
+     LEFT JOIN SBOM AS s
+       ON s.sbom_id = sc.sbom_id
+     LEFT JOIN APPLICATION AS a
+       ON a.application_id = s.application_id
+     LEFT JOIN COMPONENT_VERSION_VULNERABILITY AS cvv
+       ON cvv.component_version_id = sc.component_version_id
+     LEFT JOIN VULNERABILITY AS v
+       ON v.vulnerability_id = cvv.vulnerability_id
+     WHERE sc.sbom_id = ?
+     GROUP BY
+       sc.component_version_id,
+       cv.component_id,
+       c.component_name,
+       cv.version_number,
+       s.application_id,
+       a.application_name,
+       v.vulnerability_id,
+       v.cve_id,
+       v.severity
+     ORDER BY c.component_name ASC, cv.version_number ASC`,
+    [sbomId],
+  );
+
+  const [edgeRows] = await getMySqlPool().execute<SbomGraphEdge[]>(
+    `SELECT
+       d.component_version_id AS source_component_version_id,
+       source_cv.component_id AS source_component_id,
+       source_component.component_name AS source_component_name,
+       d.depends_on_component_version_id AS target_component_version_id,
+       target_cv.component_id AS target_component_id,
+       target_component.component_name AS target_component_name,
+       d.dependency_scope
+     FROM SBOM_CONTAINS AS sc
+     INNER JOIN DEPENDENCY AS d
+       ON d.component_version_id = sc.component_version_id
+     INNER JOIN COMPONENT_VERSION AS source_cv
+       ON source_cv.component_version_id = d.component_version_id
+     INNER JOIN COMPONENT AS source_component
+       ON source_component.component_id = source_cv.component_id
+     INNER JOIN COMPONENT_VERSION AS target_cv
+       ON target_cv.component_version_id = d.depends_on_component_version_id
+     INNER JOIN COMPONENT AS target_component
+       ON target_component.component_id = target_cv.component_id
+     WHERE sc.sbom_id = ?
+     ORDER BY source_component.component_name ASC, target_component.component_name ASC`,
+    [sbomId],
+  );
+
+  return { nodes: nodeRows, edges: edgeRows };
 }

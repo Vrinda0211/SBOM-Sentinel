@@ -23,7 +23,7 @@ vi.mock("@/lib/mysql", () => ({
   getMySqlPool: () => ({ execute: poolExecute, getConnection }),
 }));
 
-import { createSbom, listSbomsForApplication } from "./index";
+import { createSbom, getSbomGraphData, listSbomsForApplication } from "./index";
 
 const applicationId = "d4a9b522-d33a-4f2c-9b5b-65cfe521d001";
 const versionId = "f1c57f52-3244-4db4-b10c-f1b2b555d002";
@@ -106,5 +106,32 @@ describe("SBOM database operations", () => {
     await expect(listSbomsForApplication(applicationId)).resolves.toBe(rows);
     expect(poolExecute.mock.calls[0][0]).toContain("COUNT(sc.component_version_id)");
     expect(poolExecute.mock.calls[0][1]).toEqual([applicationId]);
+  });
+
+  it("returns graph nodes and dependency edges for an SBOM", async () => {
+    const nodeRows = [{ component_version_id: versionId, component_name: "react" }];
+    const edgeRows = [{
+      source_component_version_id: versionId,
+      source_component_id: "source-component",
+      source_component_name: "react",
+      target_component_version_id: "target-version",
+      target_component_id: "target-component",
+      target_component_name: "scheduler",
+      dependency_scope: "runtime",
+    }];
+    poolExecute
+      .mockResolvedValueOnce([nodeRows, undefined])
+      .mockResolvedValueOnce([edgeRows, undefined]);
+
+    await expect(getSbomGraphData("3d8b8d8a-8f12-4d15-9b5b-8ec2e6dbe0d1")).resolves.toEqual({
+      nodes: nodeRows,
+      edges: edgeRows,
+    });
+    expect(poolExecute).toHaveBeenCalledTimes(2);
+    expect(poolExecute.mock.calls[0][0]).toContain("FROM SBOM_CONTAINS AS sc");
+    expect(poolExecute.mock.calls[1][0]).toContain("FROM SBOM_CONTAINS AS sc");
+    expect(poolExecute.mock.calls[0][1]).toEqual([
+      "3d8b8d8a-8f12-4d15-9b5b-8ec2e6dbe0d1",
+    ]);
   });
 });
