@@ -22,7 +22,9 @@ describe("dependency database operations", () => {
   });
 
   it("inserts a dependency with bound version IDs and scope", async () => {
-    execute.mockResolvedValue([{}, undefined]);
+    execute
+      .mockResolvedValueOnce([[], undefined])
+      .mockResolvedValueOnce([{}, undefined]);
 
     await addDependency({
       componentVersionId: sourceVersionId,
@@ -30,7 +32,13 @@ describe("dependency database operations", () => {
       dependencyScope: " production ",
     });
 
-    expect(execute).toHaveBeenCalledWith(
+    expect(execute).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("FROM DEPENDENCY"),
+      [sourceVersionId, targetVersionId],
+    );
+    expect(execute).toHaveBeenNthCalledWith(
+      2,
       expect.stringContaining("INSERT INTO DEPENDENCY"),
       [sourceVersionId, targetVersionId, "production"],
     );
@@ -44,6 +52,62 @@ describe("dependency database operations", () => {
       }),
     ).rejects.toThrow("cannot depend on itself");
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid dependency scope before querying", async () => {
+    await expect(
+      addDependency({
+        componentVersionId: sourceVersionId,
+        dependsOnComponentVersionId: targetVersionId,
+        dependencyScope: "  ",
+      }),
+    ).rejects.toThrow("Dependency scope must contain");
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("rejects a duplicate dependency before inserting", async () => {
+    execute.mockResolvedValue([[{ component_version_id: sourceVersionId }], undefined]);
+
+    await expect(
+      addDependency({
+        componentVersionId: sourceVersionId,
+        dependsOnComponentVersionId: targetVersionId,
+      }),
+    ).rejects.toThrow("already exists");
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates foreign-key failures from the dependency insert", async () => {
+    execute
+      .mockResolvedValueOnce([[], undefined])
+      .mockRejectedValueOnce(
+        Object.assign(new Error("Cannot add or update a child row"), {
+          code: "ER_NO_REFERENCED_ROW_2",
+        }),
+      );
+
+    await expect(
+      addDependency({
+        componentVersionId: sourceVersionId,
+        dependsOnComponentVersionId: targetVersionId,
+      }),
+    ).rejects.toMatchObject({ code: "ER_NO_REFERENCED_ROW_2" });
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("propagates database duplicate errors if a dependency insert races", async () => {
+    execute
+      .mockResolvedValueOnce([[], undefined])
+      .mockRejectedValueOnce(
+        Object.assign(new Error("Duplicate entry"), { code: "ER_DUP_ENTRY" }),
+      );
+
+    await expect(
+      addDependency({
+        componentVersionId: sourceVersionId,
+        dependsOnComponentVersionId: targetVersionId,
+      }),
+    ).rejects.toMatchObject({ code: "ER_DUP_ENTRY" });
   });
 
   it("lists joined dependency and target component details", async () => {

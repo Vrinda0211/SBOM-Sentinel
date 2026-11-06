@@ -9,6 +9,7 @@ vi.mock("@/lib/mysql", () => ({
 
 import {
   addComponentVersion,
+  createComponent,
   createLicense,
   findApplicationsUsingComponent,
   listComponentVersions,
@@ -55,22 +56,97 @@ describe("component and license database operations", () => {
     expect(id).toMatch(/^[0-9a-f-]{36}$/i);
   });
 
-  it("inserts a component version against its existing component", async () => {
+  it("creates a component with a generated ID and bound parameters", async () => {
     execute.mockResolvedValue([{}, undefined]);
+
+    const id = await createComponent({
+      componentName: "react",
+      componentType: "library",
+    });
+
+    expect(execute.mock.calls[0][0]).toContain("INSERT INTO COMPONENT");
+    expect(execute.mock.calls[0][1]).toEqual([id, "react", "library"]);
+    expect(id).toMatch(/^[0-9a-f-]{36}$/i);
+  });
+
+  it("rejects an empty component name before inserting", async () => {
+    await expect(createComponent({ componentName: "  " })).rejects.toThrow(
+      "Component name must contain",
+    );
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate component versions before inserting", async () => {
+    execute.mockResolvedValue([[{ component_version_id: componentId }], undefined]);
+
+    await expect(
+      addComponentVersion(componentId, {
+        versionNumber: "1.2.3",
+        releaseDate: "2024-01-02",
+      }),
+    ).rejects.toThrow("already exists");
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates foreign-key failures when inserting a component version", async () => {
+    execute
+      .mockResolvedValueOnce([[], undefined])
+      .mockRejectedValueOnce(
+        Object.assign(new Error("Cannot add or update a child row"), {
+          code: "ER_NO_REFERENCED_ROW_2",
+        }),
+      );
+
+    await expect(
+      addComponentVersion(componentId, {
+        versionNumber: "1.2.3",
+        licenseId: "f1c57f52-3244-4db4-b10c-f1b2b555d002",
+      }),
+    ).rejects.toMatchObject({ code: "ER_NO_REFERENCED_ROW_2" });
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("propagates database duplicate errors if a component-version insert races", async () => {
+    execute
+      .mockResolvedValueOnce([[], undefined])
+      .mockRejectedValueOnce(
+        Object.assign(new Error("Duplicate entry"), { code: "ER_DUP_ENTRY" }),
+      );
+
+    await expect(
+      addComponentVersion(componentId, { versionNumber: "1.2.3" }),
+    ).rejects.toMatchObject({ code: "ER_DUP_ENTRY" });
+  });
+
+  it("inserts a component version against its existing component", async () => {
+    execute
+      .mockResolvedValueOnce([[], undefined])
+      .mockResolvedValueOnce([{}, undefined]);
 
     const versionId = await addComponentVersion(componentId, {
       versionNumber: "1.2.3",
       releaseDate: "2024-01-02",
     });
 
-    expect(execute.mock.calls[0][0]).toContain("INSERT INTO COMPONENT_VERSION");
-    expect(execute.mock.calls[0][1]).toEqual([
+    expect(execute.mock.calls[0][0]).toContain("FROM COMPONENT_VERSION");
+    expect(execute.mock.calls[1][0]).toContain("INSERT INTO COMPONENT_VERSION");
+    expect(execute.mock.calls[1][1]).toEqual([
       versionId,
       componentId,
       null,
       "1.2.3",
       "2024-01-02",
     ]);
+  });
+
+  it("rejects an invalid component-version date before querying", async () => {
+    await expect(
+      addComponentVersion(componentId, {
+        versionNumber: "1.2.3",
+        releaseDate: "2024-02-30",
+      }),
+    ).rejects.toThrow("Release date must be a valid calendar date");
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("finds applications using a component through their SBOMs", async () => {

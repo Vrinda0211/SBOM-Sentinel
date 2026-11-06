@@ -171,6 +171,19 @@ export async function addComponentVersion(
   if (input.licenseId != null) {
     requireUuid(input.licenseId, "License ID");
   }
+
+  const normalizedVersionNumber = input.versionNumber.trim();
+  const [existingRows] = await getMySqlPool().execute<RowDataPacket[]>(
+    `SELECT 1
+     FROM COMPONENT_VERSION
+     WHERE component_id = ? AND version_number = ?
+     LIMIT 1`,
+    [componentId, normalizedVersionNumber],
+  );
+  if (existingRows.length > 0) {
+    throw new TypeError("A component version with this number already exists.");
+  }
+
   const componentVersionId = randomUUID();
   await getMySqlPool().execute<ResultSetHeader>(
     `INSERT INTO COMPONENT_VERSION
@@ -180,7 +193,7 @@ export async function addComponentVersion(
       componentVersionId,
       componentId,
       input.licenseId ?? null,
-      input.versionNumber.trim(),
+      normalizedVersionNumber,
       input.releaseDate ?? null,
     ],
   );
