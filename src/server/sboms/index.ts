@@ -56,7 +56,13 @@ export async function createSbom(input: CreateSbomInput): Promise<string> {
   for (const componentVersionId of input.componentVersionIds) {
     requireUuid(componentVersionId, "Component version ID");
   }
-  if (new Set(input.componentVersionIds).size !== input.componentVersionIds.length) {
+  const normalizedComponentVersionIds = input.componentVersionIds.map((id) =>
+    id.toLowerCase(),
+  );
+  if (
+    new Set(normalizedComponentVersionIds).size !==
+    normalizedComponentVersionIds.length
+  ) {
     throw new TypeError("SBOM component version IDs must not contain duplicates.");
   }
 

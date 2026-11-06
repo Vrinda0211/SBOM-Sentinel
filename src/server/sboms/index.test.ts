@@ -104,6 +104,28 @@ describe("SBOM database operations", () => {
     expect(getConnection).not.toHaveBeenCalled();
   });
 
+  it("rejects invalid SBOM input before opening a transaction", async () => {
+    await expect(
+      createSbom({
+        applicationId: "not-a-uuid",
+        format: "CycloneDX",
+        componentVersionIds: [],
+      }),
+    ).rejects.toThrow("Application ID must be a UUID");
+    expect(getConnection).not.toHaveBeenCalled();
+  });
+
+  it("rejects case-variant duplicate UUIDs before opening a transaction", async () => {
+    await expect(
+      createSbom({
+        applicationId,
+        format: "CycloneDX",
+        componentVersionIds: [versionId, versionId.toUpperCase()],
+      }),
+    ).rejects.toThrow("must not contain duplicates");
+    expect(getConnection).not.toHaveBeenCalled();
+  });
+
   it("lists SBOMs for an application with an aggregate component count", async () => {
     const rows = [{ sbom_id: "sbom" }];
     poolExecute.mockResolvedValue([rows, undefined]);
@@ -158,6 +180,48 @@ describe("SBOM database operations", () => {
     expect(getConnection).not.toHaveBeenCalled();
   });
 
+  it("rejects invalid SBOM component identifiers before querying", async () => {
+    await expect(addSbomComponent("not-a-uuid", versionId)).rejects.toThrow(
+      "SBOM ID must be a UUID",
+    );
+    expect(poolExecute).not.toHaveBeenCalled();
+    expect(getConnection).not.toHaveBeenCalled();
+  });
+
+  it("propagates foreign-key failures from the SBOM component insert", async () => {
+    poolExecute.mockResolvedValueOnce([[], undefined]);
+    execute.mockRejectedValueOnce(
+      Object.assign(new Error("Cannot add or update a child row"), {
+        code: "ER_NO_REFERENCED_ROW_2",
+      }),
+    );
+
+    await expect(
+      addSbomComponent(
+        "3d8b8d8a-8f12-4d15-9b5b-8ec2e6dbe0d1",
+        versionId,
+      ),
+    ).rejects.toMatchObject({ code: "ER_NO_REFERENCED_ROW_2" });
+    expect(rollback).toHaveBeenCalledOnce();
+    expect(commit).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("propagates database duplicate errors if an SBOM component insert races", async () => {
+    poolExecute.mockResolvedValueOnce([[], undefined]);
+    execute.mockRejectedValueOnce(
+      Object.assign(new Error("Duplicate entry"), { code: "ER_DUP_ENTRY" }),
+    );
+
+    await expect(
+      addSbomComponent(
+        "3d8b8d8a-8f12-4d15-9b5b-8ec2e6dbe0d1",
+        versionId,
+      ),
+    ).rejects.toMatchObject({ code: "ER_DUP_ENTRY" });
+    expect(rollback).toHaveBeenCalledOnce();
+  });
+
   it("returns graph nodes and dependency edges for an SBOM", async () => {
     const nodeRows = [{ component_version_id: versionId, component_name: "react" }];
     const edgeRows = [{
@@ -179,9 +243,21 @@ describe("SBOM database operations", () => {
     });
     expect(poolExecute).toHaveBeenCalledTimes(2);
     expect(poolExecute.mock.calls[0][0]).toContain("FROM SBOM_CONTAINS AS sc");
+    expect(poolExecute.mock.calls[0][0]).toContain("WHERE sc.sbom_id = ?");
     expect(poolExecute.mock.calls[1][0]).toContain("FROM SBOM_CONTAINS AS sc");
+    expect(poolExecute.mock.calls[1][0]).toContain("WHERE sc.sbom_id = ?");
     expect(poolExecute.mock.calls[0][1]).toEqual([
       "3d8b8d8a-8f12-4d15-9b5b-8ec2e6dbe0d1",
     ]);
+    expect(poolExecute.mock.calls[1][1]).toEqual([
+      "3d8b8d8a-8f12-4d15-9b5b-8ec2e6dbe0d1",
+    ]);
+  });
+
+  it("rejects an invalid SBOM ID before graph queries", async () => {
+    await expect(getSbomGraphData("not-a-uuid")).rejects.toThrow(
+      "SBOM ID must be a UUID",
+    );
+    expect(poolExecute).not.toHaveBeenCalled();
   });
 });
