@@ -133,6 +133,25 @@ interface DependencyInput {
   dependency_scope: string | null;
 }
 
+interface Neo4jConstraint {
+  name: unknown;
+  type: unknown;
+  entityType: unknown;
+  labelsOrTypes: unknown;
+  properties: unknown;
+}
+
+const expectedConstraints = [
+  { name: "application_id_unique", label: "Application", property: "application_id" },
+  { name: "sbom_id_unique", label: "SBOM", property: "sbom_id" },
+  { name: "component_id_unique", label: "Component", property: "component_id" },
+  {
+    name: "component_version_id_unique",
+    label: "ComponentVersion",
+    property: "component_version_id",
+  },
+] as const;
+
 function requireUuid(value: string, label: string): string {
   if (typeof value !== "string" || !UUID_PATTERN.test(value)) {
     throw new TypeError(`${label} must be a UUID.`);
@@ -270,7 +289,43 @@ async function runRead<T>(
   return withNeo4jSession((session) => session.executeRead(operation));
 }
 
-export async function initializeNeo4jGraph(): Promise<void> {
+async function listConstraints(): Promise<Neo4jConstraint[]> {
+  return withNeo4jSession(async (session) => {
+    const result = await session.run(
+      `SHOW CONSTRAINTS
+       YIELD name, type, entityType, labelsOrTypes, properties
+       RETURN name, type, entityType, labelsOrTypes, properties`,
+    );
+    return result.records.map((record) => ({
+      name: record.get("name"),
+      type: record.get("type"),
+      entityType: record.get("entityType"),
+      labelsOrTypes: record.get("labelsOrTypes"),
+      properties: record.get("properties"),
+    }));
+  });
+}
+
+function isExpectedConstraint(
+  actual: Neo4jConstraint | undefined,
+  expected: (typeof expectedConstraints)[number],
+): boolean {
+  return (
+    actual !== undefined &&
+    actual.name === expected.name &&
+    actual.type === "NODE_PROPERTY_UNIQUENESS" &&
+    actual.entityType === "NODE" &&
+    Array.isArray(actual.labelsOrTypes) &&
+    actual.labelsOrTypes.includes(expected.label) &&
+    Array.isArray(actual.properties) &&
+    actual.properties.includes(expected.property)
+  );
+}
+
+export async function initializeNeo4jGraph(): Promise<
+  { name: string; status: "already_existed" | "created" }[]
+> {
+  const before = await listConstraints();
   const constraints = [
     `CREATE CONSTRAINT application_id_unique IF NOT EXISTS
      FOR (node:Application) REQUIRE node.application_id IS UNIQUE`,
@@ -286,6 +341,22 @@ export async function initializeNeo4jGraph(): Promise<void> {
     for (const query of constraints) {
       await session.run(query);
     }
+  });
+
+  const after = await listConstraints();
+  return expectedConstraints.map((expected) => {
+    const actual = after.find((constraint) => constraint.name === expected.name);
+    if (!isExpectedConstraint(actual, expected)) {
+      throw new Error(`Constraint verification failed: ${expected.name}`);
+    }
+
+    const existed = before.some((constraint) =>
+      isExpectedConstraint(constraint, expected),
+    );
+    return {
+      name: expected.name,
+      status: existed ? "already_existed" : "created",
+    };
   });
 }
 

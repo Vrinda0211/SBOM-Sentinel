@@ -44,11 +44,37 @@ const sbomId = "f1c57f52-3244-4db4-b10c-f1b2b555d002";
 const componentId = "d43f502f-2d8e-4c48-bd44-74eebfcdaa03";
 const sourceVersionId = "826cae55-05c3-4f23-a9ec-d6a5a1f3a004";
 const targetVersionId = "130a507f-ea85-45ce-af5a-fd6a53c84005";
+const expectedGraphConstraints = [
+  {
+    name: "application_id_unique",
+    label: "Application",
+    property: "application_id",
+  },
+  { name: "sbom_id_unique", label: "SBOM", property: "sbom_id" },
+  { name: "component_id_unique", label: "Component", property: "component_id" },
+  {
+    name: "component_version_id_unique",
+    label: "ComponentVersion",
+    property: "component_version_id",
+  },
+] as const;
 
 function makeRecord(values: Record<string, unknown>) {
   return {
     get: (key: string) => values[key],
   };
+}
+
+function makeConstraintRecords(type: string) {
+  return expectedGraphConstraints.map(({ name, label, property }) =>
+    makeRecord({
+      name,
+      type,
+      entityType: "NODE",
+      labelsOrTypes: [label],
+      properties: [property],
+    }),
+  );
 }
 
 const transaction = {
@@ -75,17 +101,54 @@ describe("Neo4j graph operations", () => {
     );
   });
 
-  it("creates idempotent uniqueness constraints for every graph entity", async () => {
-    await initializeNeo4jGraph();
+  it("creates and verifies named node property uniqueness constraints", async () => {
+    let showConstraintsCall = 0;
+    sessionRun.mockImplementation(async (query: string) => {
+      if (query.startsWith("SHOW CONSTRAINTS")) {
+        showConstraintsCall += 1;
+        return {
+          records:
+            showConstraintsCall === 1
+              ? []
+              : makeConstraintRecords("NODE_PROPERTY_UNIQUENESS"),
+        };
+      }
+      return { records: [] };
+    });
 
-    expect(sessionRun).toHaveBeenCalledTimes(4);
+    await expect(initializeNeo4jGraph()).resolves.toEqual(
+      expectedGraphConstraints.map(({ name }) => ({ name, status: "created" })),
+    );
+
+    expect(sessionRun).toHaveBeenCalledTimes(6);
     expect(sessionRun.mock.calls.map(([query]) => query)).toEqual(
       expect.arrayContaining([
+        expect.stringContaining("SHOW CONSTRAINTS"),
         expect.stringContaining("Application"),
         expect.stringContaining("SBOM"),
         expect.stringContaining("Component)"),
         expect.stringContaining("ComponentVersion"),
       ]),
+    );
+  });
+
+  it("rejects constraints reported with the legacy UNIQUENESS type", async () => {
+    let showConstraintsCall = 0;
+    sessionRun.mockImplementation(async (query: string) => {
+      if (query.startsWith("SHOW CONSTRAINTS")) {
+        showConstraintsCall += 1;
+        return {
+          records:
+            showConstraintsCall === 1
+              ? []
+              : makeConstraintRecords("UNIQUENESS"),
+        };
+      }
+      return { records: [] };
+    });
+
+    await expect(initializeNeo4jGraph()).rejects.toThrow(
+      "Constraint verification failed: application_id_unique",
     );
   });
 
