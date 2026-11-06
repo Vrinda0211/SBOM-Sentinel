@@ -9,8 +9,9 @@ vulnerabilities.
 - **Next.js, TypeScript, and Tailwind CSS** provide the web application.
 - **MySQL**, accessed through `mysql2` and parameterized SQL in server-side
   TypeScript, stores the structured records.
-- **Neo4j**, accessed through `neo4j-driver`, is reserved for dependency graph
-  relationships and impact analysis.
+- **Neo4j**, accessed through the official `neo4j-driver`, stores dependency
+  graph relationships and supports impact analysis. MySQL remains the source
+  of truth for structured records.
 - Database credentials are read from environment variables and must not be
   committed.
 
@@ -23,7 +24,7 @@ not the MySQL data access layer.
 - Node.js 20.19+, 22.12+, or 24+ and npm
 - MySQL 8.0.16+ for database-backed functionality and enforced `CHECK`
   constraints
-- Neo4j when graph functionality is added
+- Neo4j Community or Enterprise 5+ when using graph functionality
 
 ## Get started
 
@@ -58,6 +59,60 @@ create the database when it does not yet exist.
 `npm run db:seed` loads repeatable local sample applications, SBOMs,
 components, versions, licenses, and vulnerability findings from
 `database/mysql/seed.sql`. It makes no external API calls.
+
+### Local Neo4j
+
+Start a local Neo4j 5+ instance (for example, with Neo4j Desktop or Docker),
+then set `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, and optionally
+`NEO4J_DATABASE` in `.env`. The default database name is `neo4j`; the example
+environment file contains placeholders only. The driver and sessions are
+created on the server, and each session is closed after its operation.
+
+The server-only graph API is in `src/server/graph/`. From a trusted Next.js
+Server Component or Server Action, call `initializeNeo4jGraph()` once to create
+the four idempotent uniqueness constraints. Then use `upsertApplication`,
+`upsertSbom`, `upsertComponent`, and `upsertComponentVersion` with IDs from
+MySQL, followed by `linkApplicationToSbom`, `linkSbomToComponentVersion`, and
+`upsertDependency`. For example:
+
+```ts
+import {
+  initializeNeo4jGraph,
+  upsertComponentVersion,
+  upsertDependency,
+} from "@/server/graph";
+
+await initializeNeo4jGraph();
+await upsertComponentVersion({
+  componentVersionId: componentVersion.component_version_id,
+  componentId: componentVersion.component_id,
+  versionNumber: componentVersion.version_number,
+  licenseId: componentVersion.license_id,
+  releaseDate: componentVersion.release_date,
+});
+await upsertDependency(sourceVersionId, {
+  dependsOnComponentVersionId: targetVersionId,
+  dependencyScope: "runtime",
+});
+```
+
+The IDs in this example must come from existing MySQL records; it does not
+create relational records. Graph reads include `getApplicationSbomGraph`,
+`getDirectDependencies`, `getTransitiveDependencies`,
+`getTransitiveDependents`, `findShortestDependencyPaths`, and
+`findAffectedApplications`. Traversal depth defaults to 5 and is capped at 12;
+results default to 100 and are capped at 500. `replaceSbomContents` and
+`replaceDependenciesForVersion` update only the named relationships in a
+Neo4j transaction and roll back if referenced graph records are missing.
+
+The current MySQL `DEPENDENCY` table stores a source/target component-version
+pair and optional `dependency_scope`, without an SBOM association. The graph
+API models that shape as global version-to-version edges, but Person 1 must
+confirm the final synchronization contract before the databases are integrated.
+The graph API does not synchronize MySQL records automatically. Vulnerabilities
+remain in MySQL and can later be overlaid in the UI by component-version ID;
+they are not duplicated as Neo4j nodes. No live Neo4j operation is performed
+by the unit tests; they mock the official driver.
 
 ## Server-side database functions
 
