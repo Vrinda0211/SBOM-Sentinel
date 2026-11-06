@@ -23,7 +23,12 @@ vi.mock("@/lib/mysql", () => ({
   getMySqlPool: () => ({ execute: poolExecute, getConnection }),
 }));
 
-import { createSbom, getSbomGraphData, listSbomsForApplication } from "./index";
+import {
+  addSbomComponent,
+  createSbom,
+  getSbomGraphData,
+  listSbomsForApplication,
+} from "./index";
 
 const applicationId = "d4a9b522-d33a-4f2c-9b5b-65cfe521d001";
 const versionId = "f1c57f52-3244-4db4-b10c-f1b2b555d002";
@@ -106,6 +111,51 @@ describe("SBOM database operations", () => {
     await expect(listSbomsForApplication(applicationId)).resolves.toBe(rows);
     expect(poolExecute.mock.calls[0][0]).toContain("COUNT(sc.component_version_id)");
     expect(poolExecute.mock.calls[0][1]).toEqual([applicationId]);
+  });
+
+  it("adds a single component version to an SBOM with a transaction", async () => {
+    poolExecute.mockResolvedValueOnce([[], undefined]);
+    getConnection.mockResolvedValue({
+      execute,
+      beginTransaction,
+      commit,
+      rollback,
+      release,
+    });
+
+    await addSbomComponent(
+      "3d8b8d8a-8f12-4d15-9b5b-8ec2e6dbe0d1",
+      versionId,
+    );
+
+    expect(poolExecute).toHaveBeenCalledWith(
+      expect.stringContaining("SELECT 1\n     FROM SBOM_CONTAINS"),
+      [
+        "3d8b8d8a-8f12-4d15-9b5b-8ec2e6dbe0d1",
+        versionId,
+      ],
+    );
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO SBOM_CONTAINS"),
+      [
+        "3d8b8d8a-8f12-4d15-9b5b-8ec2e6dbe0d1",
+        versionId,
+      ],
+    );
+    expect(beginTransaction).toHaveBeenCalledOnce();
+    expect(commit).toHaveBeenCalledOnce();
+  });
+
+  it("rejects duplicate SBOM component insertions before transaction", async () => {
+    poolExecute.mockResolvedValue([[{ component_version_id: versionId }], undefined]);
+
+    await expect(
+      addSbomComponent(
+        "3d8b8d8a-8f12-4d15-9b5b-8ec2e6dbe0d1",
+        versionId,
+      ),
+    ).rejects.toThrow("already contains");
+    expect(getConnection).not.toHaveBeenCalled();
   });
 
   it("returns graph nodes and dependency edges for an SBOM", async () => {

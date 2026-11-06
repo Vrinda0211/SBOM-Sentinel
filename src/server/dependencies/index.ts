@@ -37,6 +37,19 @@ export async function addDependency(input: DependencyInput): Promise<void> {
     throw new TypeError("Dependency scope must contain 1 to 50 characters.");
   }
 
+  const normalizedScope = input.dependencyScope?.trim() ?? null;
+  const [existingRows] = await getMySqlPool().execute<RowDataPacket[]>(
+    `SELECT 1
+     FROM DEPENDENCY
+     WHERE component_version_id = ?
+       AND depends_on_component_version_id = ?
+     LIMIT 1`,
+    [input.componentVersionId, input.dependsOnComponentVersionId],
+  );
+  if (existingRows.length > 0) {
+    throw new TypeError("This dependency already exists.");
+  }
+
   await getMySqlPool().execute<ResultSetHeader>(
     `INSERT INTO DEPENDENCY
        (component_version_id, depends_on_component_version_id, dependency_scope)
@@ -44,7 +57,7 @@ export async function addDependency(input: DependencyInput): Promise<void> {
     [
       input.componentVersionId,
       input.dependsOnComponentVersionId,
-      input.dependencyScope?.trim() ?? null,
+      normalizedScope,
     ],
   );
 }

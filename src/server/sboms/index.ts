@@ -78,6 +78,33 @@ export async function createSbom(input: CreateSbomInput): Promise<string> {
   return sbomId;
 }
 
+export async function addSbomComponent(
+  sbomId: string,
+  componentVersionId: string,
+): Promise<void> {
+  requireUuid(sbomId, "SBOM ID");
+  requireUuid(componentVersionId, "Component version ID");
+
+  const [existingRows] = await getMySqlPool().execute<RowDataPacket[]>(
+    `SELECT 1
+     FROM SBOM_CONTAINS
+     WHERE sbom_id = ? AND component_version_id = ?
+     LIMIT 1`,
+    [sbomId, componentVersionId],
+  );
+  if (existingRows.length > 0) {
+    throw new TypeError("SBOM already contains this component version.");
+  }
+
+  await inTransaction(async (connection) => {
+    await connection.execute<ResultSetHeader>(
+      `INSERT INTO SBOM_CONTAINS (sbom_id, component_version_id)
+       VALUES (?, ?)`,
+      [sbomId, componentVersionId],
+    );
+  });
+}
+
 export async function listSbomsForApplication(
   applicationId: string,
 ): Promise<SbomRecord[]> {
