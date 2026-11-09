@@ -15,6 +15,7 @@ export interface SbomPackage {
   name: string;
   version: string | null;
   type: string | null;
+  scope: string | null;
   purl: string | null;
   licenses: string[];
   description: string | null;
@@ -23,6 +24,7 @@ export interface SbomPackage {
 export interface SbomDependency {
   sourceId: string;
   targetId: string;
+  dependencyScope: string | null;
 }
 
 export interface NormalizedSbom {
@@ -240,6 +242,11 @@ function parseCycloneDxPackage(
       "Component version",
     ),
     type,
+    scope: optionalString(
+      component.scope,
+      `${path}.scope`,
+      "Component scope",
+    ),
     purl,
     licenses: cyclonedxLicenses(component.licenses, `${path}.licenses`),
     description: optionalString(
@@ -285,6 +292,12 @@ function parseCycloneDx(document: JsonObject): NormalizedSbom {
   ).map((component, index) =>
     parseCycloneDxPackage(component, `$.components[${index}]`, aliases),
   );
+  const packageById = new Map(
+    [...(application ? [application] : []), ...components].map((component) => [
+      component.id,
+      component,
+    ]),
+  );
   const dependencies = optionalArray(
     document.dependencies,
     "$.dependencies",
@@ -313,6 +326,7 @@ function parseCycloneDx(document: JsonObject): NormalizedSbom {
       return {
         sourceId,
         targetId: requireReference(targetReference, aliases, targetPath),
+        dependencyScope: packageById.get(sourceId)?.scope ?? null,
       };
     });
   });
@@ -416,6 +430,7 @@ function parseSpdxPackage(
       `${path}.primaryPackagePurpose`,
       "Package purpose",
     ),
+    scope: null,
     purl,
     licenses: spdxLicenses(pkg, path),
     description: optionalString(
@@ -530,6 +545,7 @@ function parseSpdx(document: JsonObject): NormalizedSbom {
         aliases,
         `${path}.relatedSpdxElement`,
       ),
+      dependencyScope: null,
     });
   });
 
@@ -550,6 +566,7 @@ function parseSpdx(document: JsonObject): NormalizedSbom {
           name,
           version: null,
           type: null,
+          scope: null,
           purl: null,
           licenses: [],
           description: null,

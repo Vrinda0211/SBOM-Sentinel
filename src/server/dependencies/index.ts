@@ -1,6 +1,10 @@
 import "server-only";
 
-import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
+import type {
+  PoolConnection,
+  ResultSetHeader,
+  RowDataPacket,
+} from "mysql2/promise";
 import { getMySqlPool } from "@/lib/mysql";
 import { requireUuid } from "@/server/database";
 
@@ -22,7 +26,13 @@ export interface DependencyRecord extends RowDataPacket {
   dependency_scope: string | null;
 }
 
-export async function addDependency(input: DependencyInput): Promise<void> {
+type SqlExecutor = Pick<PoolConnection, "execute">;
+
+async function addDependencyWithExecutor(
+  executor: SqlExecutor,
+  input: DependencyInput,
+  reuseExisting: boolean,
+): Promise<void> {
   requireUuid(input.componentVersionId, "Component version ID");
   requireUuid(input.dependsOnComponentVersionId, "Dependency target version ID");
   if (input.componentVersionId === input.dependsOnComponentVersionId) {
@@ -38,8 +48,10 @@ export async function addDependency(input: DependencyInput): Promise<void> {
   }
 
   const normalizedScope = input.dependencyScope?.trim() ?? null;
-  const [existingRows] = await getMySqlPool().execute<RowDataPacket[]>(
-    `SELECT 1
+  const [existingRows] = await executor.execute<
+    (RowDataPacket & { dependency_scope: string | null })[]
+  >(
+    `SELECT dependency_scope
      FROM DEPENDENCY
      WHERE component_version_id = ?
        AND depends_on_component_version_id = ?
@@ -47,10 +59,30 @@ export async function addDependency(input: DependencyInput): Promise<void> {
     [input.componentVersionId, input.dependsOnComponentVersionId],
   );
   if (existingRows.length > 0) {
+    if (reuseExisting) {
+      if (
+        normalizedScope !== null &&
+        existingRows[0].dependency_scope === null
+      ) {
+        await executor.execute<ResultSetHeader>(
+          `UPDATE DEPENDENCY
+           SET dependency_scope = ?
+           WHERE component_version_id = ?
+             AND depends_on_component_version_id = ?
+             AND dependency_scope IS NULL`,
+          [
+            normalizedScope,
+            input.componentVersionId,
+            input.dependsOnComponentVersionId,
+          ],
+        );
+      }
+      return;
+    }
     throw new TypeError("This dependency already exists.");
   }
 
-  await getMySqlPool().execute<ResultSetHeader>(
+  await executor.execute<ResultSetHeader>(
     `INSERT INTO DEPENDENCY
        (component_version_id, depends_on_component_version_id, dependency_scope)
      VALUES (?, ?, ?)`,
@@ -60,6 +92,24 @@ export async function addDependency(input: DependencyInput): Promise<void> {
       normalizedScope,
     ],
   );
+}
+
+export async function addDependencyInTransaction(
+  connection: PoolConnection,
+  input: DependencyInput,
+): Promise<void> {
+  return addDependencyWithExecutor(connection, input, false);
+}
+
+export async function ensureDependencyInTransaction(
+  connection: PoolConnection,
+  input: DependencyInput,
+): Promise<void> {
+  return addDependencyWithExecutor(connection, input, true);
+}
+
+export async function addDependency(input: DependencyInput): Promise<void> {
+  return addDependencyWithExecutor(getMySqlPool(), input, false);
 }
 
 export async function listDependenciesForVersion(

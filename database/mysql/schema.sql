@@ -57,6 +57,20 @@ CREATE TABLE IF NOT EXISTS COMPONENT_VERSION (
         UNIQUE (component_id, version_number)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS COMPONENT_VERSION_LICENSE (
+    component_version_id CHAR(36) NOT NULL,
+    license_id CHAR(36) NOT NULL,
+    PRIMARY KEY (component_version_id, license_id),
+    CONSTRAINT fk_cvl_component_version
+        FOREIGN KEY (component_version_id)
+        REFERENCES COMPONENT_VERSION(component_version_id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_cvl_license
+        FOREIGN KEY (license_id)
+        REFERENCES LICENSE(license_id)
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS VULNERABILITY (
     vulnerability_id CHAR(36) NOT NULL,
     cve_id VARCHAR(50) NOT NULL,

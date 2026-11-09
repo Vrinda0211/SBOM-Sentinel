@@ -26,6 +26,7 @@ const cycloneDxSample = {
   components: [
     {
       type: "library",
+      scope: "required",
       "bom-ref": "example-lib-ref",
       name: "example-lib",
       version: "1.2.3",
@@ -163,6 +164,7 @@ describe("SBOM content parser", () => {
         {
           sourceId: "example-lib-ref",
           targetId: "pkg:npm/other-lib@4.5.6",
+          dependencyScope: "required",
         },
       ],
     });
@@ -203,9 +205,29 @@ describe("SBOM content parser", () => {
         },
       ],
       dependencies: [
-        { sourceId: "SPDXRef-Example", targetId: "SPDXRef-Other" },
+        {
+          sourceId: "SPDXRef-Example",
+          targetId: "SPDXRef-Other",
+          dependencyScope: null,
+        },
       ],
     });
+  });
+
+  it("uses a null scope for the synthesized SPDX application fallback", () => {
+    const sbom = parseSample({
+      ...spdxSample,
+      relationships: spdxSample.relationships.filter(
+        (relationship) => relationship.relationshipType !== "DESCRIBES",
+      ),
+    });
+
+    expect(sbom.application).toMatchObject({
+      id: "SPDXRef-DOCUMENT",
+      name: "SBOM Sentinel release",
+      scope: null,
+    });
+    expect(sbom.components).toHaveLength(3);
   });
 
   it("reverses SPDX DEPENDENCY_OF relationships into dependent-to-dependency edges", () => {
@@ -221,7 +243,11 @@ describe("SBOM content parser", () => {
     });
 
     expect(sbom.dependencies).toEqual([
-      { sourceId: "SPDXRef-Example", targetId: "SPDXRef-Other" },
+      {
+        sourceId: "SPDXRef-Example",
+        targetId: "SPDXRef-Other",
+        dependencyScope: null,
+      },
     ]);
   });
 
@@ -238,7 +264,11 @@ describe("SBOM content parser", () => {
     });
 
     expect(sbom.dependencies).toEqual([
-      { sourceId: "SPDXRef-Example", targetId: "SPDXRef-Other" },
+      {
+        sourceId: "SPDXRef-Example",
+        targetId: "SPDXRef-Other",
+        dependencyScope: null,
+      },
     ]);
   });
 

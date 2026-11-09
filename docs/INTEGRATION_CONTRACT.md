@@ -9,6 +9,42 @@ operation and its transaction rollback fail, the helper reports an
 `AggregateError` containing both failures. Multi-row `createSbom` operations
 use one transaction and roll back if any insert fails.
 
+## Parsing and importing SBOMs
+
+`parseSbomContent(content: string)` in `src/server/sbom-parser/` accepts
+CycloneDX JSON and SPDX JSON and returns a normalized `NormalizedSbom`.
+Validation failures use `SbomValidationError` with a stable error code and a
+document path. The parser does not access a database, generate IDs, or call
+external services.
+
+`importSbomContent(content, applicationNameOverride?)` in
+`src/server/sboms/import.ts` parses the document and persists its relational
+records in a single MySQL transaction. It reuses applications by name and
+description, components by name and type, versions by component ID and version
+string, and licenses by SPDX identifier. If an application or
+component match is ambiguous, import fails rather than creating another
+record. Dependency pairs are deduplicated; duplicate pairs with conflicting
+scopes are rejected. The result contains the actual MySQL IDs and creation
+and reuse counts. A failure during any insert rolls back the full import.
+
+The existing `COMPONENT_VERSION.license_id` column remains in place for
+compatibility. The additive `COMPONENT_VERSION_LICENSE` table preserves all
+licenses for imported versions, and license list functions union the legacy
+column with the junction table. Apply the non-destructive schema update with
+`npm run db:init` before importing SBOMs into an existing database.
+
+The existing version column is non-nullable; packages without a version are
+stored with the explicit `UNKNOWN` sentinel. This does not create an identifier
+or UUID and keeps database constraints intact.
+
+`synchronizeSbomGraph(sbomId)` reads persisted MySQL records and upserts their
+UUIDs to Neo4j. It also upserts dependency targets already present in MySQL
+when they are outside the current SBOM. Since `DEPENDENCY` is global to a
+component-version pair and has no SBOM foreign key, the graph uses global
+directed version edges. Graph sync runs after the MySQL transaction commits;
+if it fails, the imported relational SBOM remains committed and the caller can
+retry synchronization for that SBOM.
+
 ## SBOM operations
 
 ### `createSbom(input: CreateSbomInput): Promise<string>`
@@ -139,4 +175,6 @@ The repository's Vitest database-operation tests mock the MySQL pool. They
 verify query selection, bound parameters, validation, transaction rollback,
 and propagation of representative MySQL duplicate-key and foreign-key errors.
 They do not execute SQL against a live MySQL server; live constraint behavior
-must be verified using a locally configured database.
+must be verified using a locally configured database. SBOM import and graph
+synchronization tests mock their database helpers; live verification requires
+both configured services.

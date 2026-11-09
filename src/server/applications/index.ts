@@ -1,7 +1,11 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
+import type {
+  PoolConnection,
+  ResultSetHeader,
+  RowDataPacket,
+} from "mysql2/promise";
 import { getMySqlPool } from "@/lib/mysql";
 import { requireUuid } from "@/server/database";
 
@@ -18,6 +22,8 @@ export interface ApplicationRecord extends RowDataPacket {
   sbom_count?: number;
   vulnerable_version_count?: number;
 }
+
+type SqlExecutor = Pick<PoolConnection, "execute">;
 
 function validateInput(input: ApplicationInput): void {
   if (
@@ -43,9 +49,23 @@ function validateId(applicationId: string): void {
 export async function registerApplication(
   input: ApplicationInput,
 ): Promise<string> {
+  return registerApplicationWithExecutor(getMySqlPool(), input);
+}
+
+export async function registerApplicationInTransaction(
+  connection: PoolConnection,
+  input: ApplicationInput,
+): Promise<string> {
+  return registerApplicationWithExecutor(connection, input);
+}
+
+async function registerApplicationWithExecutor(
+  executor: SqlExecutor,
+  input: ApplicationInput,
+): Promise<string> {
   validateInput(input);
   const applicationId = randomUUID();
-  await getMySqlPool().execute<ResultSetHeader>(
+  await executor.execute<ResultSetHeader>(
     `INSERT INTO APPLICATION (application_id, application_name, description)
      VALUES (?, ?, ?)`,
     [applicationId, input.applicationName.trim(), input.description ?? null],
