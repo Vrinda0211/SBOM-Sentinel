@@ -10,6 +10,7 @@ vi.mock("@/lib/mysql", () => ({
 import {
   deleteApplication,
   getApplication,
+  getApplicationRiskSummary,
   listApplications,
   listApplicationsWithAtLeastVulnerableVersions,
   registerApplication,
@@ -86,6 +87,19 @@ describe("application database operations", () => {
     expect(execute.mock.calls[0][1]).toEqual([applicationId]);
     expect(execute.mock.calls[1][1]).toEqual(["Updated", null, applicationId]);
     expect(execute.mock.calls[2][1]).toEqual([applicationId]);
+  });
+
+  it("calls the stored risk summary with a bound application ID", async () => {
+    const summary = [{ application_id: applicationId, open_finding_count: 2 }];
+    execute.mockResolvedValue([[summary], undefined]);
+
+    await expect(getApplicationRiskSummary(applicationId)).resolves.toBe(
+      summary[0],
+    );
+    expect(execute).toHaveBeenCalledWith(
+      "CALL SP_APPLICATION_RISK_SUMMARY(?)",
+      [applicationId],
+    );
   });
 
   it("rejects malformed identifiers before querying", async () => {

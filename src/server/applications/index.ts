@@ -23,6 +23,19 @@ export interface ApplicationRecord extends RowDataPacket {
   vulnerable_version_count?: number;
 }
 
+export interface ApplicationRiskSummary extends RowDataPacket {
+  application_id: string;
+  application_name: string;
+  sbom_count: number;
+  component_version_count: number;
+  open_finding_count: number;
+  critical_finding_count: number;
+  total_severity_score: number;
+  average_severity_score: number | null;
+  oldest_published_date: Date | null;
+  latest_published_date: Date | null;
+}
+
 type SqlExecutor = Pick<PoolConnection, "execute">;
 
 function validateInput(input: ApplicationInput): void {
@@ -160,6 +173,16 @@ export async function getApplication(
     [applicationId],
   );
   return rows[0] ?? null;
+}
+
+export async function getApplicationRiskSummary(
+  applicationId: string,
+): Promise<ApplicationRiskSummary | null> {
+  validateId(applicationId);
+  const [results] = await getMySqlPool().execute<
+    ApplicationRiskSummary[][]
+  >("CALL SP_APPLICATION_RISK_SUMMARY(?)", [applicationId]);
+  return results[0]?.[0] ?? null;
 }
 
 export async function updateApplication(

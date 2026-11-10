@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS COMPONENT (
     component_id CHAR(36) NOT NULL,
     component_name VARCHAR(255) NOT NULL,
     component_type VARCHAR(100) NULL,
-    PRIMARY KEY (component_id)
+    PRIMARY KEY (component_id),
+    KEY idx_component_lookup (component_name, component_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS SBOM (
@@ -136,6 +137,10 @@ CREATE TABLE IF NOT EXISTS COMPONENT_VERSION_VULNERABILITY (
         FOREIGN KEY (vulnerability_id)
         REFERENCES VULNERABILITY(vulnerability_id)
         ON DELETE CASCADE,
+    KEY idx_cvv_vulnerability_component (
+        vulnerability_id,
+        component_version_id
+    ),
     CONSTRAINT chk_remediation_status
         CHECK (
             remediation_status IN (

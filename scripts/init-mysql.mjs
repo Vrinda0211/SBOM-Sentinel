@@ -48,6 +48,49 @@ try {
       await pool.query(statement);
     }
   }
+
+  const indexes = [
+    {
+      table: "COMPONENT",
+      name: "idx_component_lookup",
+      definition: "(component_name, component_type)",
+    },
+    {
+      table: "COMPONENT_VERSION_VULNERABILITY",
+      name: "idx_cvv_vulnerability_component",
+      definition: "(vulnerability_id, component_version_id)",
+    },
+  ];
+  for (const index of indexes) {
+    const [existing] = await pool.execute(
+      `SELECT 1
+       FROM information_schema.statistics
+       WHERE table_schema = DATABASE()
+         AND table_name = ?
+         AND index_name = ?
+       LIMIT 1`,
+      [index.table, index.name],
+    );
+    if (existing.length === 0) {
+      await pool.query(
+        `ALTER TABLE \`${index.table}\`
+         ADD INDEX \`${index.name}\` ${index.definition}`,
+      );
+    }
+  }
+
+  const routineSql = await readFile(
+    fileURLToPath(
+      new URL("../database/mysql/procedures.sql", import.meta.url),
+    ),
+    "utf8",
+  );
+  for (const statement of routineSql
+    .split(";")
+    .map((statement) => statement.trim())
+    .filter(Boolean)) {
+    await pool.query(statement);
+  }
 } finally {
   await pool.end();
 }

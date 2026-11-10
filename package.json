@@ -11,6 +11,7 @@
     "db:generate": "prisma generate",
     "db:init": "node scripts/init-mysql.mjs",
     "db:seed": "node scripts/seed-mysql.mjs",
+    "test:mysql:live": "node scripts/require-mysql-env.mjs && vitest run src/server/mysql-live.integration.test.ts",
     "test": "vitest run"
   },
   "dependencies": {

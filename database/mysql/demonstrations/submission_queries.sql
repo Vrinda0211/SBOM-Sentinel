@@ -148,6 +148,23 @@ GROUP BY a.application_id, a.application_name
 HAVING COUNT(DISTINCT f.vulnerability_id) >= 2
 ORDER BY open_finding_count DESC, a.application_name;
 
+-- IN subquery: applications containing a component with an open high/critical finding.
+SELECT DISTINCT a.application_id, a.application_name
+FROM APPLICATION AS a
+JOIN SBOM AS s
+    ON s.application_id = a.application_id
+WHERE s.sbom_id IN (
+    SELECT sc.sbom_id
+    FROM SBOM_CONTAINS AS sc
+    JOIN COMPONENT_VERSION_VULNERABILITY AS cvv
+        ON cvv.component_version_id = sc.component_version_id
+    JOIN VULNERABILITY AS v
+        ON v.vulnerability_id = cvv.vulnerability_id
+    WHERE v.severity IN ('HIGH', 'CRITICAL')
+      AND cvv.remediation_status NOT IN ('resolved', 'wont_fix')
+)
+ORDER BY a.application_name;
+
 -- Correlated subquery: each application and its count of open findings.
 SELECT
     a.application_id,
