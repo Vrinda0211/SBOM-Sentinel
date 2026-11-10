@@ -144,7 +144,7 @@ describe("Neo4j SBOM synchronization", () => {
     }
   });
 
-  it("uses MySQL UUIDs and synchronizes external dependency targets in the correct direction", async () => {
+  it("upserts all MySQL nodes before relationships and includes external targets", async () => {
     const result = await synchronizeSbomGraph(sbomId);
 
     expect(result).toEqual({
@@ -164,6 +164,12 @@ describe("Neo4j SBOM synchronization", () => {
       expect.objectContaining({ componentId: targetComponentId }),
     );
     expect(initializeNeo4jGraph).toHaveBeenCalledOnce();
+    expect(
+      upsertSbom.mock.invocationCallOrder[0],
+    ).toBeLessThan(linkApplicationToSbom.mock.invocationCallOrder[0]);
+    expect(
+      upsertComponentVersion.mock.invocationCallOrder[1],
+    ).toBeLessThan(linkApplicationToSbom.mock.invocationCallOrder[0]);
     expect(replaceSbomContents).toHaveBeenCalledWith(sbomId, [
       sourceVersionId,
     ]);
@@ -177,6 +183,20 @@ describe("Neo4j SBOM synchronization", () => {
       ],
     );
     expect(replaceDependenciesForVersion).toHaveBeenCalledTimes(1);
+  });
+
+  it("can safely synchronize the same persisted SBOM again", async () => {
+    const first = await synchronizeSbomGraph(sbomId);
+    const second = await synchronizeSbomGraph(sbomId);
+
+    expect(second).toEqual(first);
+    expect(upsertApplication).toHaveBeenCalledTimes(2);
+    expect(upsertSbom).toHaveBeenCalledTimes(2);
+    expect(upsertComponent).toHaveBeenCalledTimes(4);
+    expect(upsertComponentVersion).toHaveBeenCalledTimes(4);
+    expect(linkApplicationToSbom).toHaveBeenCalledTimes(2);
+    expect(replaceSbomContents).toHaveBeenCalledTimes(2);
+    expect(replaceDependenciesForVersion).toHaveBeenCalledTimes(2);
   });
 
   it("does not start a graph write when a persisted dependency target is missing from MySQL", async () => {
