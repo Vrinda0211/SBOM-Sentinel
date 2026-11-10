@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ManagedTransaction, Session } from "neo4j-driver";
+import neo4j from "neo4j-driver";
 
 const {
   executeRead,
@@ -385,7 +386,7 @@ describe("Neo4j graph operations", () => {
     );
     expect(transactionRun.mock.calls[0][1]).toEqual({
       componentVersionId: sourceVersionId,
-      limit: 12,
+      limit: neo4j.int(12),
     });
   });
 
@@ -413,7 +414,7 @@ describe("Neo4j graph operations", () => {
     expect(transactionRun.mock.calls[0][0]).toContain("*1..3");
     expect(transactionRun.mock.calls[0][1]).toEqual({
       componentVersionId: sourceVersionId,
-      limit: 10,
+      limit: neo4j.int(10),
     });
   });
 
@@ -478,7 +479,7 @@ describe("Neo4j graph operations", () => {
     expect(transactionRun.mock.calls[0][0]).toContain("*0..5");
     expect(transactionRun.mock.calls[0][1]).toEqual({
       applicationId,
-      rowLimit: 101,
+      rowLimit: neo4j.int(101),
     });
   });
 
@@ -513,7 +514,9 @@ describe("Neo4j graph operations", () => {
     });
     expect(transactionRun.mock.calls[0][0]).toContain("allShortestPaths");
     expect(transactionRun.mock.calls[0][0]).toContain("*1..4");
-    expect(transactionRun.mock.calls[0][1]).toMatchObject({ rowLimit: 2 });
+    expect(transactionRun.mock.calls[0][1]).toMatchObject({
+      rowLimit: neo4j.int(2),
+    });
   });
 
   it("finds direct and transitive application impact with bounded depth", async () => {
@@ -533,7 +536,9 @@ describe("Neo4j graph operations", () => {
       truncated: false,
     });
     expect(transactionRun.mock.calls[0][0]).toContain("*0..2");
-    expect(transactionRun.mock.calls[0][1]).toMatchObject({ rowLimit: 5 });
+    expect(transactionRun.mock.calls[0][1]).toMatchObject({
+      rowLimit: neo4j.int(5),
+    });
   });
 
   it("rejects traversal limits above the configured caps", async () => {

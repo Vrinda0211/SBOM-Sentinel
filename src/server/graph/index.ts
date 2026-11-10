@@ -1,5 +1,6 @@
 import "server-only";
 
+import neo4j from "neo4j-driver";
 import type { ManagedTransaction, Record as Neo4jRecord } from "neo4j-driver";
 import { withNeo4jSession } from "@/lib/neo4j";
 
@@ -809,7 +810,7 @@ export async function getApplicationSbomGraph(
          }] AS dependencies
        ORDER BY sbom.generated_at, root.component_version_id, length(path)
        LIMIT $rowLimit`,
-      { applicationId, rowLimit: limit + 1 },
+      { applicationId, rowLimit: neo4j.int(limit + 1) },
     );
     return result.records;
   });
@@ -944,7 +945,7 @@ export async function getDirectDependencies(
        dependency.dependency_scope AS dependencyScope
        ORDER BY target.version_number, target.component_version_id
        LIMIT $limit`,
-      { componentVersionId, limit },
+      { componentVersionId, limit: neo4j.int(limit) },
     );
     return result.records.map((record) => ({
       componentVersion: getValue<ComponentVersionGraphNode>(
@@ -980,7 +981,7 @@ export async function getTransitiveDependencies(
        RETURN dependency {
          .component_version_id, .version_number, .release_date, .license_id
        } AS componentVersion, depth`,
-      { componentVersionId, limit },
+      { componentVersionId, limit: neo4j.int(limit) },
     );
     return result.records.map((record) => ({
       componentVersion: getValue<ComponentVersionGraphNode>(
@@ -1013,7 +1014,7 @@ export async function getTransitiveDependents(
        RETURN dependent {
          .component_version_id, .version_number, .release_date, .license_id
        } AS componentVersion, depth`,
-      { componentVersionId, limit },
+      { componentVersionId, limit: neo4j.int(limit) },
     );
     return result.records.map((record) => ({
       componentVersion: getValue<ComponentVersionGraphNode>(
@@ -1059,7 +1060,7 @@ export async function findShortestDependencyPaths(
       {
         sourceComponentVersionId,
         targetComponentVersionId,
-        rowLimit: limit + 1,
+        rowLimit: neo4j.int(limit + 1),
       },
     );
     return {
@@ -1098,7 +1099,7 @@ export async function findAffectedApplications(
        RETURN application {
          .application_id, .application_name, .description, .created_at
        } AS application, dependencyDepth`,
-      { componentVersionId, rowLimit: limit + 1 },
+      { componentVersionId, rowLimit: neo4j.int(limit + 1) },
     );
     return {
       applications: result.records.slice(0, limit).map((record) => ({
