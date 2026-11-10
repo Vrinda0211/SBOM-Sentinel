@@ -50,10 +50,11 @@ The MySQL pool reads `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`,
 server-only. Configuration is validated when the pool is first requested.
 `npm run db:init` creates the configured database if needed and applies the
 non-destructive DDL in `database/mysql/schema.sql`, followed by the
-`V_OPEN_VULNERABILITY_FINDINGS` view. The table definitions preserve the nine
-tables, keys, relationships, and constraints in `SBOM_Sentinel_DDL.sql`; the
-initializer deliberately omits that file's `DROP TABLE` statements so it can
-be rerun without deleting existing data. The MySQL user needs permission to
+`V_OPEN_VULNERABILITY_FINDINGS` view. The schema preserves the original
+relational tables, keys, relationships, and constraints and adds
+`COMPONENT_VERSION_LICENSE` so one version can retain multiple licenses. The
+initializer deliberately omits destructive `DROP TABLE` statements and can be
+rerun without deleting existing data. The MySQL user needs permission to
 create the database when it does not yet exist.
 
 `npm run db:seed` loads repeatable local sample applications, SBOMs,
@@ -68,12 +69,12 @@ then set `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, and optionally
 environment file contains placeholders only. The driver and sessions are
 created on the server, and each session is closed after its operation.
 
-The server-only graph API is in `src/server/graph/`. From a trusted Next.js
-Server Component or Server Action, call `initializeNeo4jGraph()` once to create
-the four idempotent uniqueness constraints. Then use `upsertApplication`,
-`upsertSbom`, `upsertComponent`, and `upsertComponentVersion` with IDs from
-MySQL, followed by `linkApplicationToSbom`, `linkSbomToComponentVersion`, and
-`upsertDependency`. For example:
+The server-only graph API is in `src/server/graph/`. The upload workflow calls
+`initializeNeo4jGraph()` before synchronization, creating the four idempotent
+uniqueness constraints. It then uses `upsertApplication`, `upsertSbom`,
+`upsertComponent`, and `upsertComponentVersion` with IDs from MySQL, followed
+by `linkApplicationToSbom`, `replaceSbomContents`, and
+`replaceDependenciesForVersion`. For example:
 
 ```ts
 import {
@@ -105,14 +106,16 @@ results default to 100 and are capped at 500. `replaceSbomContents` and
 `replaceDependenciesForVersion` update only the named relationships in a
 Neo4j transaction and roll back if referenced graph records are missing.
 
-The current MySQL `DEPENDENCY` table stores a source/target component-version
-pair and optional `dependency_scope`, without an SBOM association. The graph
-API models that shape as global version-to-version edges, but Person 1 must
-confirm the final synchronization contract before the databases are integrated.
-The graph API does not synchronize MySQL records automatically. Vulnerabilities
-remain in MySQL and can later be overlaid in the UI by component-version ID;
-they are not duplicated as Neo4j nodes. No live Neo4j operation is performed
-by the unit tests; they mock the official driver.
+The MySQL `DEPENDENCY` table stores a source/target component-version pair and
+optional `dependency_scope`, without an SBOM association. Graph synchronization
+therefore models dependencies as global version-to-version edges and updates
+only source versions represented in the imported SBOM. Referenced targets
+outside the SBOM are also upserted using their existing MySQL IDs. If MySQL
+processing succeeds but Neo4j is unavailable, the dashboard reports the
+partial outcome and offers an SBOM-specific retry; it does not undo committed
+relational data. Vulnerabilities remain in MySQL and are not duplicated as
+Neo4j nodes. Graph operations are mocked in unit tests; a running Neo4j service
+is required for live verification.
 
 ## Server-side database functions
 
@@ -121,8 +124,8 @@ directories:
 
 - `applications`: register, list, retrieve, update, and delete applications.
 - `sboms`: create SBOM metadata and component-version associations atomically;
-  list SBOMs for an application. SBOM parsing is intentionally outside this
-  API.
+  list SBOMs for an application; parse and transactionally import CycloneDX or
+  SPDX JSON using `importSbomContent`; and synchronize or retry graph data.
 - `components`: list components, versions, and licenses; create licenses,
   components, and versions; find applications that use a component.
 - `dependencies`: add, list, and remove dependency edges using the
@@ -135,6 +138,16 @@ Functions validate identifiers and user input, bind values as SQL parameters,
 and let database errors (including foreign-key and uniqueness failures)
 propagate to their callers. Application deletion follows the schema's
 `ON DELETE CASCADE` relationship for SBOM data.
+
+The dashboard at `/` reads application summaries, SBOMs, component versions,
+license associations, and vulnerability findings from MySQL. Uploads are
+server-side JSON imports capped at 5 MB. Components are reused by name and
+type, versions by component ID and version string, and licenses by SPDX
+identifier. Ambiguous pre-existing application or component matches fail
+clearly rather than creating duplicate records. Missing package versions use
+the explicit `UNKNOWN` value required by the existing non-null version column.
+See [the integration contract](./docs/INTEGRATION_CONTRACT.md) for transaction
+and matching details.
 
 ## Database concepts demonstrated
 

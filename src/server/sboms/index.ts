@@ -1,7 +1,11 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
+import type {
+  PoolConnection,
+  ResultSetHeader,
+  RowDataPacket,
+} from "mysql2/promise";
 import { getMySqlPool } from "@/lib/mysql";
 import { inTransaction, requireUuid } from "@/server/database";
 
@@ -41,7 +45,16 @@ export interface SbomGraphEdge extends RowDataPacket {
   dependency_scope: string | null;
 }
 
-export async function createSbom(input: CreateSbomInput): Promise<string> {
+export interface SbomSyncRecord extends RowDataPacket {
+  sbom_id: string;
+  application_id: string;
+  application_name: string;
+  description: string | null;
+  format: string;
+  generated_at: Date;
+}
+
+function validateCreateSbomInput(input: CreateSbomInput): string[] {
   requireUuid(input.applicationId, "Application ID");
   if (
     typeof input.format !== "string" ||
@@ -65,23 +78,45 @@ export async function createSbom(input: CreateSbomInput): Promise<string> {
   ) {
     throw new TypeError("SBOM component version IDs must not contain duplicates.");
   }
+  return normalizedComponentVersionIds;
+}
 
+export async function createSbomInTransaction(
+  connection: PoolConnection,
+  input: CreateSbomInput,
+  generatedAt?: Date,
+): Promise<string> {
+  const componentVersionIds = validateCreateSbomInput(input);
   const sbomId = randomUUID();
-  await inTransaction(async (connection) => {
+  if (generatedAt && Number.isNaN(generatedAt.valueOf())) {
+    throw new TypeError("SBOM generated_at must be a valid date.");
+  }
+  if (generatedAt) {
+    await connection.execute<ResultSetHeader>(
+      `INSERT INTO SBOM (sbom_id, application_id, format, generated_at)
+       VALUES (?, ?, ?, ?)`,
+      [sbomId, input.applicationId, input.format.trim(), generatedAt],
+    );
+  } else {
     await connection.execute<ResultSetHeader>(
       `INSERT INTO SBOM (sbom_id, application_id, format)
        VALUES (?, ?, ?)`,
       [sbomId, input.applicationId, input.format.trim()],
     );
-    for (const componentVersionId of input.componentVersionIds) {
-      await connection.execute<ResultSetHeader>(
-        `INSERT INTO SBOM_CONTAINS (sbom_id, component_version_id)
-         VALUES (?, ?)`,
-        [sbomId, componentVersionId],
-      );
-    }
-  });
+  }
+  for (const componentVersionId of componentVersionIds) {
+    await connection.execute<ResultSetHeader>(
+      `INSERT INTO SBOM_CONTAINS (sbom_id, component_version_id)
+       VALUES (?, ?)`,
+      [sbomId, componentVersionId],
+    );
+  }
   return sbomId;
+}
+
+export async function createSbom(input: CreateSbomInput): Promise<string> {
+  validateCreateSbomInput(input);
+  return inTransaction((connection) => createSbomInTransaction(connection, input));
 }
 
 export async function addSbomComponent(
@@ -202,4 +237,24 @@ export async function getSbomGraphData(
   );
 
   return { nodes: nodeRows, edges: edgeRows };
+}
+
+export async function getSbomSyncRecord(
+  sbomId: string,
+): Promise<SbomSyncRecord | null> {
+  requireUuid(sbomId, "SBOM ID");
+  const [rows] = await getMySqlPool().execute<SbomSyncRecord[]>(
+    `SELECT
+       s.sbom_id,
+       s.application_id,
+       a.application_name,
+       a.description,
+       s.format,
+       s.generated_at
+     FROM SBOM AS s
+     INNER JOIN APPLICATION AS a ON a.application_id = s.application_id
+     WHERE s.sbom_id = ?`,
+    [sbomId],
+  );
+  return rows[0] ?? null;
 }

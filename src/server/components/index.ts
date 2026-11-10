@@ -1,7 +1,11 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
+import type {
+  PoolConnection,
+  ResultSetHeader,
+  RowDataPacket,
+} from "mysql2/promise";
 import { getMySqlPool } from "@/lib/mysql";
 import { requireIsoDate, requireUuid } from "@/server/database";
 
@@ -47,6 +51,10 @@ export interface LicenseRecord extends RowDataPacket {
   license_type: string | null;
 }
 
+export interface ComponentVersionLicenseRecord extends LicenseRecord {
+  component_version_id: string;
+}
+
 export interface ApplicationUsingComponent extends RowDataPacket {
   application_id: string;
   application_name: string;
@@ -55,6 +63,8 @@ export interface ApplicationUsingComponent extends RowDataPacket {
   component_version_id: string;
   version_number: string;
 }
+
+type SqlExecutor = Pick<PoolConnection, "execute">;
 
 function validateText(value: string, field: string, maxLength: number): void {
   if (
@@ -129,10 +139,13 @@ export async function listLicenses(): Promise<LicenseRecord[]> {
   return rows;
 }
 
-export async function createLicense(input: LicenseInput): Promise<string> {
+async function createLicenseWithExecutor(
+  executor: SqlExecutor,
+  input: LicenseInput,
+): Promise<string> {
   validateLicense(input);
   const licenseId = randomUUID();
-  await getMySqlPool().execute<ResultSetHeader>(
+  await executor.execute<ResultSetHeader>(
     `INSERT INTO LICENSE
        (license_id, license_name, spdx_identifier, license_type)
      VALUES (?, ?, ?, ?)`,
@@ -146,10 +159,24 @@ export async function createLicense(input: LicenseInput): Promise<string> {
   return licenseId;
 }
 
-export async function createComponent(input: ComponentInput): Promise<string> {
+export async function createLicenseInTransaction(
+  connection: PoolConnection,
+  input: LicenseInput,
+): Promise<string> {
+  return createLicenseWithExecutor(connection, input);
+}
+
+export async function createLicense(input: LicenseInput): Promise<string> {
+  return createLicenseWithExecutor(getMySqlPool(), input);
+}
+
+async function createComponentWithExecutor(
+  executor: SqlExecutor,
+  input: ComponentInput,
+): Promise<string> {
   validateComponent(input);
   const componentId = randomUUID();
-  await getMySqlPool().execute<ResultSetHeader>(
+  await executor.execute<ResultSetHeader>(
     `INSERT INTO COMPONENT (component_id, component_name, component_type)
      VALUES (?, ?, ?)`,
     [
@@ -161,7 +188,19 @@ export async function createComponent(input: ComponentInput): Promise<string> {
   return componentId;
 }
 
-export async function addComponentVersion(
+export async function createComponentInTransaction(
+  connection: PoolConnection,
+  input: ComponentInput,
+): Promise<string> {
+  return createComponentWithExecutor(connection, input);
+}
+
+export async function createComponent(input: ComponentInput): Promise<string> {
+  return createComponentWithExecutor(getMySqlPool(), input);
+}
+
+async function addComponentVersionWithExecutor(
+  executor: SqlExecutor,
   componentId: string,
   input: AddComponentVersionInput,
 ): Promise<string> {
@@ -173,7 +212,7 @@ export async function addComponentVersion(
   }
 
   const normalizedVersionNumber = input.versionNumber.trim();
-  const [existingRows] = await getMySqlPool().execute<RowDataPacket[]>(
+  const [existingRows] = await executor.execute<RowDataPacket[]>(
     `SELECT 1
      FROM COMPONENT_VERSION
      WHERE component_id = ? AND version_number = ?
@@ -185,7 +224,7 @@ export async function addComponentVersion(
   }
 
   const componentVersionId = randomUUID();
-  await getMySqlPool().execute<ResultSetHeader>(
+  await executor.execute<ResultSetHeader>(
     `INSERT INTO COMPONENT_VERSION
        (component_version_id, component_id, license_id, version_number, release_date)
      VALUES (?, ?, ?, ?, ?)`,
@@ -198,6 +237,97 @@ export async function addComponentVersion(
     ],
   );
   return componentVersionId;
+}
+
+export async function addComponentVersionInTransaction(
+  connection: PoolConnection,
+  componentId: string,
+  input: AddComponentVersionInput,
+): Promise<string> {
+  return addComponentVersionWithExecutor(connection, componentId, input);
+}
+
+export async function addComponentVersion(
+  componentId: string,
+  input: AddComponentVersionInput,
+): Promise<string> {
+  return addComponentVersionWithExecutor(getMySqlPool(), componentId, input);
+}
+
+export async function addComponentVersionLicenseInTransaction(
+  connection: PoolConnection,
+  componentVersionId: string,
+  licenseId: string,
+): Promise<void> {
+  requireUuid(componentVersionId, "Component version ID");
+  requireUuid(licenseId, "License ID");
+  await connection.execute<ResultSetHeader>(
+    `INSERT INTO COMPONENT_VERSION_LICENSE (component_version_id, license_id)
+     VALUES (?, ?)
+     ON DUPLICATE KEY UPDATE license_id = license_id`,
+    [componentVersionId, licenseId],
+  );
+}
+
+export async function listLicensesForComponentVersion(
+  componentVersionId: string,
+): Promise<LicenseRecord[]> {
+  requireUuid(componentVersionId, "Component version ID");
+  const [rows] = await getMySqlPool().execute<LicenseRecord[]>(
+    `SELECT license.license_id, license.license_name,
+       license.spdx_identifier, license.license_type
+     FROM LICENSE AS license
+     INNER JOIN (
+       SELECT license_id
+       FROM COMPONENT_VERSION_LICENSE
+       WHERE component_version_id = ?
+       UNION
+       SELECT license_id
+       FROM COMPONENT_VERSION
+       WHERE component_version_id = ? AND license_id IS NOT NULL
+     ) AS linked_license ON linked_license.license_id = license.license_id
+     ORDER BY license.license_name ASC, license.spdx_identifier ASC`,
+    [componentVersionId, componentVersionId],
+  );
+  return rows;
+}
+
+export async function listLicensesForComponentVersions(
+  componentVersionIds: string[],
+): Promise<ComponentVersionLicenseRecord[]> {
+  if (!Array.isArray(componentVersionIds)) {
+    throw new TypeError("Component version IDs must be an array.");
+  }
+  const normalizedIds = [...new Set(
+    componentVersionIds.map((componentVersionId) => {
+      requireUuid(componentVersionId, "Component version ID");
+      return componentVersionId.toLowerCase();
+    }),
+  )];
+  if (normalizedIds.length === 0) {
+    return [];
+  }
+  const placeholders = normalizedIds.map(() => "?").join(", ");
+  const [rows] = await getMySqlPool().execute<ComponentVersionLicenseRecord[]>(
+    `SELECT linked.component_version_id,
+       license.license_id, license.license_name,
+       license.spdx_identifier, license.license_type
+     FROM (
+       SELECT component_version_id, license_id
+       FROM COMPONENT_VERSION_LICENSE
+       WHERE component_version_id IN (${placeholders})
+       UNION
+       SELECT component_version_id, license_id
+       FROM COMPONENT_VERSION
+       WHERE component_version_id IN (${placeholders})
+         AND license_id IS NOT NULL
+     ) AS linked
+     INNER JOIN LICENSE AS license ON license.license_id = linked.license_id
+     ORDER BY linked.component_version_id ASC, license.license_name ASC,
+       license.spdx_identifier ASC`,
+    [...normalizedIds, ...normalizedIds],
+  );
+  return rows;
 }
 
 export async function findApplicationsUsingComponent(
