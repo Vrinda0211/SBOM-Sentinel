@@ -36,7 +36,28 @@ export interface ApplicationRiskSummary extends RowDataPacket {
   latest_published_date: Date | null;
 }
 
+interface ApplicationRiskSummaryRow extends RowDataPacket {
+  application_id: string;
+  application_name: string;
+  sbom_count: number | string;
+  component_version_count: number | string;
+  open_finding_count: number | string;
+  critical_finding_count: number | string;
+  total_severity_score: number | string;
+  average_severity_score: number | string | null;
+  oldest_published_date: Date | null;
+  latest_published_date: Date | null;
+}
+
 type SqlExecutor = Pick<PoolConnection, "execute">;
+
+function normalizeAggregateNumber(value: number | string, field: string): number {
+  const normalized = Number(value);
+  if (!Number.isFinite(normalized)) {
+    throw new TypeError(`MySQL returned a non-numeric ${field} aggregate.`);
+  }
+  return normalized;
+}
 
 function validateInput(input: ApplicationInput): void {
   if (
@@ -180,9 +201,39 @@ export async function getApplicationRiskSummary(
 ): Promise<ApplicationRiskSummary | null> {
   validateId(applicationId);
   const [results] = await getMySqlPool().execute<
-    ApplicationRiskSummary[][]
+    ApplicationRiskSummaryRow[][]
   >("CALL SP_APPLICATION_RISK_SUMMARY(?)", [applicationId]);
-  return results[0]?.[0] ?? null;
+  const row = results[0]?.[0];
+  if (!row) {
+    return null;
+  }
+  return {
+    ...row,
+    sbom_count: normalizeAggregateNumber(row.sbom_count, "sbom_count"),
+    component_version_count: normalizeAggregateNumber(
+      row.component_version_count,
+      "component_version_count",
+    ),
+    open_finding_count: normalizeAggregateNumber(
+      row.open_finding_count,
+      "open_finding_count",
+    ),
+    critical_finding_count: normalizeAggregateNumber(
+      row.critical_finding_count,
+      "critical_finding_count",
+    ),
+    total_severity_score: normalizeAggregateNumber(
+      row.total_severity_score,
+      "total_severity_score",
+    ),
+    average_severity_score:
+      row.average_severity_score === null
+        ? null
+        : normalizeAggregateNumber(
+            row.average_severity_score,
+            "average_severity_score",
+          ),
+  };
 }
 
 export async function updateApplication(

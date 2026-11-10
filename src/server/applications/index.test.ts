@@ -90,16 +90,67 @@ describe("application database operations", () => {
   });
 
   it("calls the stored risk summary with a bound application ID", async () => {
-    const summary = [{ application_id: applicationId, open_finding_count: 2 }];
-    execute.mockResolvedValue([[summary], undefined]);
+    execute.mockResolvedValue([
+      [
+        [
+          {
+            application_id: applicationId,
+            application_name: "Sentinel",
+            sbom_count: "3",
+            component_version_count: "12",
+            open_finding_count: "2",
+            critical_finding_count: "1",
+            total_severity_score: "7",
+            average_severity_score: "3.5",
+            oldest_published_date: new Date("2024-01-01"),
+            latest_published_date: new Date("2025-01-01"),
+          },
+        ],
+      ],
+      undefined,
+    ]);
 
-    await expect(getApplicationRiskSummary(applicationId)).resolves.toBe(
-      summary[0],
-    );
+    await expect(getApplicationRiskSummary(applicationId)).resolves.toMatchObject({
+      application_id: applicationId,
+      sbom_count: 3,
+      component_version_count: 12,
+      open_finding_count: 2,
+      critical_finding_count: 1,
+      total_severity_score: 7,
+      average_severity_score: 3.5,
+    });
     expect(execute).toHaveBeenCalledWith(
       "CALL SP_APPLICATION_RISK_SUMMARY(?)",
       [applicationId],
     );
+  });
+
+  it("preserves a null average severity aggregate", async () => {
+    execute.mockResolvedValue([
+      [
+        [
+          {
+            application_id: applicationId,
+            application_name: "Sentinel",
+            sbom_count: "0",
+            component_version_count: "0",
+            open_finding_count: "0",
+            critical_finding_count: "0",
+            total_severity_score: "0",
+            average_severity_score: null,
+            oldest_published_date: null,
+            latest_published_date: null,
+          },
+        ],
+      ],
+      undefined,
+    ]);
+
+    await expect(getApplicationRiskSummary(applicationId)).resolves.toMatchObject({
+      average_severity_score: null,
+      oldest_published_date: null,
+      latest_published_date: null,
+    });
   });
 
   it("rejects malformed identifiers before querying", async () => {
