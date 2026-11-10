@@ -90,7 +90,6 @@ export async function synchronizeSbomGraph(
     format: sbom.format,
     generatedAt: sbom.generated_at,
   });
-  await linkApplicationToSbom(sbom.application_id, sbom.sbom_id);
 
   for (const componentId of componentIds) {
     const component = componentsById.get(componentId);
@@ -120,6 +119,8 @@ export async function synchronizeSbomGraph(
       licenseId: version.license_id,
     });
   }
+
+  await linkApplicationToSbom(sbom.application_id, sbom.sbom_id);
 
   const sbomVersionIds = [...new Set(
     nodes.map((node) => node.component_version_id),

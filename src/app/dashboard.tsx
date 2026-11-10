@@ -33,7 +33,7 @@ function formatDate(value: string | null): string {
   const date = new Date(value);
   return Number.isNaN(date.valueOf())
     ? value
-    : date.toLocaleString();
+    : `${date.toISOString().slice(0, 19).replace("T", " ")} UTC`;
 }
 
 function GraphVisualization({
@@ -77,6 +77,20 @@ function GraphVisualization({
   const componentNames = new Map(
     details.components.map((component) => [component.id, component.name]),
   );
+  const graphComponentNames = new Map<string, string>();
+  for (const node of graph.nodes) {
+    if (node.kind === "Component") {
+      graphComponentNames.set(node.data.component_id, node.data.component_name);
+    }
+  }
+  for (const edge of graph.edges) {
+    if (edge.type === "HAS_VERSION" && !componentNames.has(edge.targetId)) {
+      const name = graphComponentNames.get(edge.sourceId);
+      if (name) {
+        componentNames.set(edge.targetId, name);
+      }
+    }
+  }
   const edges = graph.edges.filter((edge) => edge.type === "DEPENDS_ON");
   const svgHeight = Math.max(130, Math.ceil(versions.length / 2) * 100 + 35);
 
@@ -158,16 +172,16 @@ function GraphVisualization({
                 x={position.x + 10}
                 y={position.y - 2}
               >
-                {`${name} ${node.data.version_number}`.slice(0, 34)}
+                {`Component: ${name}`.slice(0, 34)}
               </text>
               <text
-                fill="#64748b"
-                fontSize="9"
+                fill="#047857"
+                fontSize="10"
                 textAnchor="middle"
                 x={position.x + 10}
                 y={position.y + 14}
               >
-                {node.data.component_version_id.slice(0, 8)}
+                {`Version: ${node.data.version_number}`.slice(0, 32)}
               </text>
             </g>
           );
@@ -233,6 +247,8 @@ export default function Dashboard({
           setSelectedSbomId(result.imported.sbomId);
           setDetails(sbomDetails);
           setSelectedVersionId(sbomDetails.components[0]?.id ?? "");
+          setTargetVersionId("");
+          setAnalysis(null);
           setDashboardError(null);
         } catch {
           setDashboardError(
@@ -247,6 +263,8 @@ export default function Dashboard({
     setSelectedApplicationId(applicationId);
     setSelectedSbomId("");
     setDetails(null);
+    setSelectedVersionId("");
+    setTargetVersionId("");
     setAnalysis(null);
     if (!applicationId) {
       setApplicationSboms(null);
@@ -263,6 +281,8 @@ export default function Dashboard({
   function loadSbom(sbomId: string) {
     setSelectedSbomId(sbomId);
     setDetails(null);
+    setSelectedVersionId("");
+    setTargetVersionId("");
     setAnalysis(null);
     if (!sbomId) {
       return;
@@ -270,14 +290,11 @@ export default function Dashboard({
     runOperation(async () => {
       const result = await loadSbomDetailsAction(sbomId);
       setDetails(result);
-      if (result.components[0]) {
-        setSelectedVersionId(result.components[0].id);
-      }
+      setSelectedVersionId(result.components[0]?.id ?? "");
     });
   }
 
-  function retryGraphSync() {
-    const sbomId = selectedSbomId;
+  function retryGraphSync(sbomId: string = selectedSbomId) {
     if (!sbomId) {
       return;
     }
@@ -299,7 +316,9 @@ export default function Dashboard({
           graph: result.graph,
         });
       }
-      setDetails(await loadSbomDetailsAction(sbomId));
+      if (selectedSbomId === sbomId) {
+        setDetails(await loadSbomDetailsAction(sbomId));
+      }
     });
   }
 
@@ -324,6 +343,27 @@ export default function Dashboard({
         finding.remediationStatus !== "resolved" &&
         finding.remediationStatus !== "wont_fix",
     ) ?? [];
+  const graphVersionOptions = (details?.graph?.nodes ?? [])
+    .filter((node) => node.kind === "ComponentVersion")
+    .map((node) => {
+      const relationship = details?.graph?.edges.find(
+        (edge) =>
+          edge.type === "HAS_VERSION" &&
+          edge.targetId === node.data.component_version_id,
+      );
+      const componentName = details?.graph?.nodes.find(
+        (candidate) =>
+          candidate.kind === "Component" &&
+          candidate.data.component_id === relationship?.sourceId,
+      );
+      return {
+        id: node.data.component_version_id,
+        label:
+          componentName?.kind === "Component"
+            ? `${componentName.data.component_name} ${node.data.version_number}`
+            : `Component version ${node.data.component_version_id.slice(0, 8)} (${node.data.version_number})`,
+      };
+    });
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -480,7 +520,9 @@ export default function Dashboard({
                 <button
                   className="mt-3 rounded-md border border-emerald-800 px-3 py-1.5 font-semibold hover:bg-emerald-100"
                   disabled={isPending}
-                  onClick={retryGraphSync}
+                  onClick={() =>
+                    retryGraphSync(uploadResult.imported.sbomId)
+                  }
                   type="button"
                 >
                   Retry Neo4j synchronization
@@ -654,10 +696,10 @@ export default function Dashboard({
               <button
                 className="mt-3 rounded-lg border border-emerald-800 px-4 py-2 text-sm font-semibold text-emerald-900 hover:bg-emerald-50 disabled:opacity-50"
                 disabled={isPending}
-                onClick={retryGraphSync}
+                onClick={() => retryGraphSync()}
                 type="button"
               >
-                Synchronize or retry Neo4j
+                Synchronize graph from MySQL
               </button>
               <GraphVisualization
                 details={details}
@@ -699,21 +741,30 @@ export default function Dashboard({
                     onChange={(event) => setSelectedVersionId(event.target.value)}
                     value={selectedVersionId}
                   >
+                    {graphVersionOptions.map((componentVersion) => (
+                      <option
+                        key={componentVersion.id}
+                        value={componentVersion.id}
+                      >
+                        {componentVersion.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-sm font-medium text-slate-700">
+                  Optional shortest-path target
+                  <select
+                    className={fieldClass}
+                    onChange={(event) => setTargetVersionId(event.target.value)}
+                    value={targetVersionId}
+                  >
+                    <option value="">No shortest-path target</option>
                     {details.components.map((component) => (
                       <option key={component.id} value={component.id}>
                         {component.name} {component.version}
                       </option>
                     ))}
                   </select>
-                </label>
-                <label className="text-sm font-medium text-slate-700">
-                  Optional shortest-path target UUID
-                  <input
-                    className={fieldClass}
-                    onChange={(event) => setTargetVersionId(event.target.value)}
-                    placeholder="Target component-version UUID"
-                    value={targetVersionId}
-                  />
                 </label>
                 <button
                   className="self-end rounded-lg border border-emerald-800 px-4 py-2 text-sm font-semibold text-emerald-900 hover:bg-emerald-50 disabled:opacity-50"
@@ -760,7 +811,13 @@ export default function Dashboard({
                         <AnalysisList
                           title="Shortest paths"
                           items={analysis.shortestPaths.paths.map(
-                            (path) => `${path.depth} dependency edges`,
+                            (path) =>
+                              `${path.depth} edges: ${path.componentVersions
+                                .map(
+                                  (version) =>
+                                    version.component_version_id.slice(0, 8),
+                                )
+                                .join(" → ")}`,
                           )}
                         />
                       )}

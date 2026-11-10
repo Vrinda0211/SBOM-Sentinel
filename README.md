@@ -165,6 +165,16 @@ and matching details.
 - SQL operations also demonstrate parameterized `INSERT`, `UPDATE`, `DELETE`,
   and `SELECT`.
 
+## DBMS submission materials
+
+The [submission guide](./docs/submission/README.md) contains the relational ER
+diagram, an audited requirement-status matrix, advanced-concept mapping,
+Neo4j/Cypher reference, application demonstration sequence, and manual
+evidence checklist. The safe MySQL DDL/DML and query examples are in
+[`database/mysql/demonstrations/submission_queries.sql`](./database/mysql/demonstrations/submission_queries.sql).
+The SQL file has not been run against the configured database; its actual
+outputs must be captured in an approved local/demo environment.
+
 `.env` and other `.env*` files are ignored by Git; `.env.example` contains
 placeholders only. Never put real credentials in committed files.
 
