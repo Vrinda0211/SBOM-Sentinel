@@ -1,0 +1,151 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "serialNumber": "urn:uuid:8b6f3d5a-7c21-4e91-a642-5f3c9d1a2048",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-11-11T00:00:00Z",
+    "component": {
+      "type": "application",
+      "bom-ref": "app-sbom-sentinel-vulnerable",
+      "name": "SBOM Sentinel Vulnerability Test App",
+      "version": "1.0.0"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "pkg-npm-express-4.18.2",
+      "name": "express",
+      "version": "4.18.2",
+      "purl": "pkg:npm/express@4.18.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg-npm-lodash-4.17.20",
+      "name": "lodash",
+      "version": "4.17.20",
+      "purl": "pkg:npm/lodash@4.17.20",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg-npm-qs-6.10.2",
+      "name": "qs",
+      "version": "6.10.2",
+      "purl": "pkg:npm/qs@6.10.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "app-sbom-sentinel-vulnerable",
+      "dependsOn": [
+        "pkg-npm-express-4.18.2"
+      ]
+    },
+    {
+      "ref": "pkg-npm-express-4.18.2",
+      "dependsOn": [
+        "pkg-npm-lodash-4.17.20",
+        "pkg-npm-qs-6.10.2"
+      ]
+    },
+    {
+      "ref": "pkg-npm-lodash-4.17.20",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg-npm-qs-6.10.2",
+      "dependsOn": []
+    }
+  ],
+  "vulnerabilities": [
+    {
+      "id": "CVE-2021-23337",
+      "source": {
+        "name": "NVD"
+      },
+      "ratings": [
+        {
+          "source": {
+            "name": "NVD"
+          },
+          "score": 7.2,
+          "severity": "high",
+          "method": "CVSSv3"
+        }
+      ],
+      "description": "Lodash versions before 4.17.21 are affected by command injection through the template function.",
+      "affects": [
+        {
+          "ref": "pkg-npm-lodash-4.17.20"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2022-24999",
+      "source": {
+        "name": "NVD"
+      },
+      "ratings": [
+        {
+          "source": {
+            "name": "NVD"
+          },
+          "score": 7.5,
+          "severity": "high",
+          "method": "CVSSv3"
+        }
+      ],
+      "description": "The qs package has a prototype pollution vulnerability in affected versions.",
+      "affects": [
+        {
+          "ref": "pkg-npm-qs-6.10.2"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2024-29041",
+      "source": {
+        "name": "NVD"
+      },
+      "ratings": [
+        {
+          "source": {
+            "name": "NVD"
+          },
+          "score": 6.1,
+          "severity": "medium",
+          "method": "CVSSv3"
+        }
+      ],
+      "description": "Express versions before 4.19.2 can allow an open redirect through crafted URLs.",
+      "published": "2024-03-25T00:00:00Z",
+      "affects": [
+        {
+          "ref": "pkg-npm-express-4.18.2"
+        }
+      ]
+    }
+  ]
+}

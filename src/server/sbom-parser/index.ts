@@ -7,7 +7,14 @@ export type SbomValidationErrorCode =
   | "unsupported_format"
   | "invalid_document"
   | "missing_identifier"
-  | "invalid_dependency_reference";
+  | "invalid_dependency_reference"
+  | "invalid_vulnerability_reference";
+
+export type SbomVulnerabilitySeverity =
+  | "LOW"
+  | "MEDIUM"
+  | "HIGH"
+  | "CRITICAL";
 
 export interface SbomPackage {
   id: string;
@@ -27,6 +34,13 @@ export interface SbomDependency {
   dependencyScope: string | null;
 }
 
+export interface SbomVulnerability {
+  id: string;
+  severity: SbomVulnerabilitySeverity;
+  publishedDate: string | null;
+  affectedComponentIds: string[];
+}
+
 export interface NormalizedSbom {
   format: SbomFormat;
   metadata: {
@@ -41,6 +55,7 @@ export interface NormalizedSbom {
   application: SbomPackage | null;
   components: SbomPackage[];
   dependencies: SbomDependency[];
+  vulnerabilities: SbomVulnerability[];
 }
 
 export class SbomValidationError extends Error {
@@ -102,6 +117,33 @@ function requireArray(value: unknown, path: string, label: string): unknown[] {
 
 function optionalArray(value: unknown, path: string, label: string): unknown[] {
   return value == null ? [] : requireArray(value, path, label);
+}
+
+function isSbomVulnerabilitySeverity(
+  value: string,
+): value is SbomVulnerabilitySeverity {
+  return ["LOW", "MEDIUM", "HIGH", "CRITICAL"].includes(value);
+}
+
+function normalizeVulnerabilitySeverity(
+  value: string | undefined,
+  path: string,
+): SbomVulnerabilitySeverity {
+  switch (value?.toUpperCase()) {
+    case "LOW":
+      return "LOW";
+    case "MEDIUM":
+      return "MEDIUM";
+    case "HIGH":
+      return "HIGH";
+    case "CRITICAL":
+      return "CRITICAL";
+    default:
+      invalidDocument(
+        path,
+        "Vulnerability must include a LOW, MEDIUM, HIGH, or CRITICAL severity rating.",
+      );
+  }
 }
 
 function requireIdentifier(
@@ -257,6 +299,123 @@ function parseCycloneDxPackage(
   };
 }
 
+function parseCycloneDxVulnerabilities(
+  value: unknown,
+  aliases: Map<string, string>,
+  componentIds: Set<string>,
+): SbomVulnerability[] {
+  const vulnerabilityIds = new Set<string>();
+  return optionalArray(value, "$.vulnerabilities", "Vulnerabilities").map(
+    (entry, index) => {
+      const path = `$.vulnerabilities[${index}]`;
+      const vulnerability = requireObject(entry, path, "Vulnerability");
+      const id = requiredString(vulnerability.id, `${path}.id`, "Vulnerability ID");
+      if (id.length > 50) {
+        invalidDocument(`${path}.id`, "Vulnerability ID must not exceed 50 characters.");
+      }
+      if (vulnerabilityIds.has(id)) {
+        invalidDocument(path, `Vulnerability ID "${id}" is duplicated.`);
+      }
+      vulnerabilityIds.add(id);
+
+      const ratings = requireArray(
+        vulnerability.ratings,
+        `${path}.ratings`,
+        "Vulnerability ratings",
+      );
+      const severityText = ratings
+        .map((rating, ratingIndex) => {
+          const ratingPath = `${path}.ratings[${ratingIndex}]`;
+          const ratingObject = requireObject(
+            rating,
+            ratingPath,
+            "Vulnerability rating",
+          );
+          return optionalString(
+            ratingObject.severity,
+            `${ratingPath}.severity`,
+            "Vulnerability severity",
+          );
+        })
+        .find(
+          (severity): severity is string =>
+            severity !== null &&
+            isSbomVulnerabilitySeverity(severity.toUpperCase()),
+        );
+      const severity = normalizeVulnerabilitySeverity(
+        severityText,
+        `${path}.ratings`,
+      );
+
+      const published = optionalString(
+        vulnerability.published,
+        `${path}.published`,
+        "Vulnerability published date",
+      );
+      let publishedDate: string | null = null;
+      if (published !== null) {
+        const datePart = published.slice(0, 10);
+        const date = new Date(`${datePart}T00:00:00.000Z`);
+        if (
+          !/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)?$/.test(
+            published,
+          ) ||
+          Number.isNaN(Date.parse(published)) ||
+          date.toISOString().slice(0, 10) !== datePart
+        ) {
+          invalidDocument(
+            `${path}.published`,
+            "Vulnerability published date must be a valid ISO date or timestamp.",
+          );
+        }
+        publishedDate = datePart;
+      }
+
+      const affects = requireArray(
+        vulnerability.affects,
+        `${path}.affects`,
+        "Affected components",
+      );
+      if (affects.length === 0) {
+        invalidDocument(
+          `${path}.affects`,
+          "Vulnerability must affect at least one declared component.",
+        );
+      }
+      const affectedComponentIds = new Set<string>();
+      affects.forEach((affected, affectedIndex) => {
+        const affectedPath = `${path}.affects[${affectedIndex}]`;
+        const affectedObject = requireObject(
+          affected,
+          affectedPath,
+          "Affected component",
+        );
+        const reference = requiredString(
+          affectedObject.ref,
+          `${affectedPath}.ref`,
+          "Affected component reference",
+        );
+        const componentId = aliases.get(reference);
+        if (componentId === undefined || !componentIds.has(componentId)) {
+          throw new SbomValidationError(
+            "invalid_vulnerability_reference",
+            `${affectedPath}.ref`,
+            `Vulnerability references unknown component identifier "${reference}".`,
+          );
+        }
+        affectedComponentIds.add(componentId);
+      });
+
+      return {
+        id,
+        severity,
+        publishedDate,
+        affectedComponentIds: [...affectedComponentIds],
+      };
+    },
+  );
+}
+
 function parseCycloneDx(document: JsonObject): NormalizedSbom {
   const specVersion = requiredString(
     document.specVersion,
@@ -330,6 +489,11 @@ function parseCycloneDx(document: JsonObject): NormalizedSbom {
       };
     });
   });
+  const vulnerabilities = parseCycloneDxVulnerabilities(
+    document.vulnerabilities,
+    aliases,
+    new Set(components.map((component) => component.id)),
+  );
 
   return {
     format: "CycloneDX",
@@ -353,6 +517,7 @@ function parseCycloneDx(document: JsonObject): NormalizedSbom {
     application,
     components,
     dependencies,
+    vulnerabilities,
   };
 }
 
@@ -590,6 +755,7 @@ function parseSpdx(document: JsonObject): NormalizedSbom {
     application,
     components,
     dependencies,
+    vulnerabilities: [],
   };
 }
 

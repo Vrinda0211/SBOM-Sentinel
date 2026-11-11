@@ -24,6 +24,7 @@ import {
   type SbomImportResult,
 } from "@/server/sboms/import";
 import { SbomValidationError } from "@/server/sbom-parser";
+import { VulnerabilityImportConflictError } from "@/server/vulnerabilities";
 import { synchronizeSbomGraph } from "@/server/sboms/graph-sync";
 import {
   getSbomGraphData,
@@ -40,6 +41,7 @@ function getImportErrorMessage(error: unknown): string {
   if (
     error instanceof SbomValidationError ||
     error instanceof SbomImportConflictError ||
+    error instanceof VulnerabilityImportConflictError ||
     error instanceof TypeError
   ) {
     return error.message;
@@ -62,6 +64,7 @@ function serializeImportResult(result: SbomImportResult) {
     packageCount: result.packageCount,
     componentVersionCount: result.componentVersionCount,
     dependencyCount: result.dependencyCount,
+    vulnerabilityCount: result.vulnerabilityCount,
     createdApplication: result.createdApplication,
     createdComponentCount: result.createdComponentCount,
     reusedComponentCount: result.reusedComponentCount,

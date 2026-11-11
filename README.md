@@ -146,6 +146,14 @@ type, versions by component ID and version string, and licenses by SPDX
 identifier. Ambiguous pre-existing application or component matches fail
 clearly rather than creating duplicate records. Missing package versions use
 the explicit `UNKNOWN` value required by the existing non-null version column.
+CycloneDX vulnerability entries are imported when they include a supported
+severity (`LOW`, `MEDIUM`, `HIGH`, or `CRITICAL`) and `affects` references to
+declared components. The importer maps those references to component-version
+records and stores the CVE and affected-version links in the same MySQL
+transaction as the SBOM. Re-imports reuse matching CVE records and preserve
+existing remediation states; a conflicting severity for an existing CVE
+aborts the import. SPDX vulnerability extensions, vulnerability descriptions,
+sources, and numeric CVSS scores are not imported.
 See [the integration contract](./docs/INTEGRATION_CONTRACT.md) for transaction
 and matching details.
 

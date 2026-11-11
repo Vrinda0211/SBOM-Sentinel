@@ -59,6 +59,7 @@ vi.mock("@/server/sboms", () => ({
   listSbomsForApplication: mocks.listSbomsForApplication,
 }));
 vi.mock("@/server/vulnerabilities", () => ({
+  VulnerabilityImportConflictError: class VulnerabilityImportConflictError extends Error {},
   listVulnerabilityFindings: mocks.listVulnerabilityFindings,
 }));
 
@@ -114,6 +115,7 @@ describe("SBOM upload and synchronization actions", () => {
       packageCount: 1,
       componentVersionCount: 1,
       dependencyCount: 0,
+      vulnerabilityCount: 0,
       createdApplication: true,
       createdComponentCount: 1,
       reusedComponentCount: 0,

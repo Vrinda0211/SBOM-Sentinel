@@ -22,7 +22,9 @@ vi.mock("@/lib/mysql", () => ({
 }));
 
 import {
+  addVulnerabilityAffectedVersionInTransaction,
   createVulnerability,
+  ensureVulnerabilityInTransaction,
   listApplicationsWithOpenVulnerabilities,
   listVulnerabilityFindings,
   listVulnerabilitiesForGraph,
@@ -69,6 +71,73 @@ describe("vulnerability database operations", () => {
     expect(release).toHaveBeenCalledOnce();
   });
 
+  it("reuses an existing CVE record without resetting its identity", async () => {
+    execute
+      .mockResolvedValueOnce([{}, undefined])
+      .mockResolvedValueOnce([
+        [
+          {
+            vulnerability_id: vulnerabilityId,
+            severity: "HIGH",
+            published_date: "2025-01-03",
+          },
+        ],
+        undefined,
+      ]);
+    await expect(
+      ensureVulnerabilityInTransaction(
+        { execute },
+        {
+          cveId: "CVE-2025-12345",
+          severity: "HIGH",
+          publishedDate: "2025-01-03",
+        },
+      ),
+    ).resolves.toBe(vulnerabilityId);
+    expect(execute.mock.calls[0][0]).toContain("ON DUPLICATE KEY UPDATE");
+    expect(execute.mock.calls[1][1]).toEqual(["CVE-2025-12345"]);
+  });
+
+  it("rejects a conflicting severity for an existing CVE", async () => {
+    execute
+      .mockResolvedValueOnce([{}, undefined])
+      .mockResolvedValueOnce([
+        [
+          {
+            vulnerability_id: vulnerabilityId,
+            severity: "HIGH",
+            published_date: null,
+          },
+        ],
+        undefined,
+      ]);
+
+    await expect(
+      ensureVulnerabilityInTransaction(
+        { execute },
+        {
+          cveId: "CVE-2025-12345",
+          severity: "MEDIUM",
+          publishedDate: null,
+        },
+      ),
+    ).rejects.toThrow("already stored with HIGH severity");
+  });
+
+  it("adds a vulnerability-to-version association idempotently", async () => {
+    await addVulnerabilityAffectedVersionInTransaction(
+      { execute },
+      versionId,
+      vulnerabilityId,
+    );
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO COMPONENT_VERSION_VULNERABILITY"),
+      [versionId, vulnerabilityId],
+    );
+    expect(execute.mock.calls[0][0]).toContain("ON DUPLICATE KEY UPDATE");
+  });
+
   it("rejects a severity outside the schema constraint", async () => {
     await expect(
       Reflect.apply(createVulnerability, undefined, [
@@ -97,6 +166,7 @@ describe("vulnerability database operations", () => {
     execute.mockResolvedValue([rows, undefined]);
 
     await expect(listVulnerabilityFindings()).resolves.toBe(rows);
+    expect(execute.mock.calls[0][0]).toContain("SELECT DISTINCT");
     expect(execute.mock.calls[0][0]).toContain(
       "FROM V_OPEN_VULNERABILITY_FINDINGS",
     );

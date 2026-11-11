@@ -9,6 +9,8 @@ const {
   createLicenseInTransaction,
   ensureDependencyInTransaction,
   createSbomInTransaction,
+  ensureVulnerabilityInTransaction,
+  addVulnerabilityAffectedVersionInTransaction,
   transactionState,
 } = vi.hoisted(() => ({
   execute: vi.fn(),
@@ -19,6 +21,8 @@ const {
   createLicenseInTransaction: vi.fn(),
   ensureDependencyInTransaction: vi.fn(),
   createSbomInTransaction: vi.fn(),
+  ensureVulnerabilityInTransaction: vi.fn(),
+  addVulnerabilityAffectedVersionInTransaction: vi.fn(),
   transactionState: { commits: 0, rollbacks: 0 },
 }));
 
@@ -46,6 +50,10 @@ vi.mock("@/server/components", () => ({
 }));
 vi.mock("@/server/dependencies", () => ({ ensureDependencyInTransaction }));
 vi.mock("@/server/sboms", () => ({ createSbomInTransaction }));
+vi.mock("@/server/vulnerabilities", () => ({
+  ensureVulnerabilityInTransaction,
+  addVulnerabilityAffectedVersionInTransaction,
+}));
 
 import { importSbomContent } from "./import";
 
@@ -62,6 +70,10 @@ const versionIds = [
 const licenseIds = [
   "86ff48ed-4179-4cca-9e68-6596be7fb006",
   "1c792001-0c67-4c79-98c4-a472123b7007",
+];
+const vulnerabilityIds = [
+  "79a1e24a-96d2-48f0-81ad-85d30ea14008",
+  "81ad85d3-0ea1-4087-9f31-ec4bd7d1a009",
 ];
 
 const sample = JSON.stringify({
@@ -95,6 +107,19 @@ const sample = JSON.stringify({
     },
   ],
   dependencies: [{ ref: "first", dependsOn: ["second"] }],
+  vulnerabilities: [
+    {
+      id: "CVE-2025-12345",
+      published: "2025-01-03T00:00:00Z",
+      ratings: [{ severity: "high" }],
+      affects: [{ ref: "first" }],
+    },
+    {
+      id: "CVE-2025-54321",
+      ratings: [{ severity: "medium" }],
+      affects: [{ ref: "second" }],
+    },
+  ],
 });
 
 describe("transactional SBOM import", () => {
@@ -118,6 +143,13 @@ describe("transactional SBOM import", () => {
     addComponentVersionLicenseInTransaction.mockReset().mockResolvedValue(undefined);
     ensureDependencyInTransaction.mockReset().mockResolvedValue(undefined);
     createSbomInTransaction.mockReset().mockResolvedValue(sbomId);
+    ensureVulnerabilityInTransaction
+      .mockReset()
+      .mockResolvedValueOnce(vulnerabilityIds[0])
+      .mockResolvedValueOnce(vulnerabilityIds[1]);
+    addVulnerabilityAffectedVersionInTransaction
+      .mockReset()
+      .mockResolvedValue(undefined);
     transactionState.commits = 0;
     transactionState.rollbacks = 0;
   });
@@ -132,6 +164,7 @@ describe("transactional SBOM import", () => {
       packageCount: 2,
       componentVersionCount: 2,
       dependencyCount: 1,
+      vulnerabilityCount: 2,
       createdApplication: true,
       createdComponentCount: 2,
       createdVersionCount: 2,
@@ -166,6 +199,27 @@ describe("transactional SBOM import", () => {
       undefined,
     );
     expect(transactionState).toEqual({ commits: 1, rollbacks: 0 });
+    expect(ensureVulnerabilityInTransaction).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      {
+        cveId: "CVE-2025-12345",
+        severity: "HIGH",
+        publishedDate: "2025-01-03",
+      },
+    );
+    expect(addVulnerabilityAffectedVersionInTransaction).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      versionIds[0],
+      vulnerabilityIds[0],
+    );
+    expect(addVulnerabilityAffectedVersionInTransaction).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      versionIds[1],
+      vulnerabilityIds[1],
+    );
   });
 
   it("reuses identical component and version records within one uploaded SBOM", async () => {
@@ -255,6 +309,19 @@ describe("transactional SBOM import", () => {
 
     await expect(importSbomContent(sample)).rejects.toThrow(
       "version insert failed",
+    );
+
+    expect(createSbomInTransaction).not.toHaveBeenCalled();
+    expect(transactionState).toEqual({ commits: 0, rollbacks: 1 });
+  });
+
+  it("rolls back the complete import if a vulnerability link fails", async () => {
+    addVulnerabilityAffectedVersionInTransaction
+      .mockReset()
+      .mockRejectedValue(new Error("vulnerability link failed"));
+
+    await expect(importSbomContent(sample)).rejects.toThrow(
+      "vulnerability link failed",
     );
 
     expect(createSbomInTransaction).not.toHaveBeenCalled();

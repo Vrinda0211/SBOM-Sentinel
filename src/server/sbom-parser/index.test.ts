@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -168,6 +169,117 @@ describe("SBOM content parser", () => {
         },
       ],
     });
+  });
+
+  it("extracts rated CycloneDX vulnerabilities and resolves affected component aliases", () => {
+    const sbom = parseSample({
+      ...cycloneDxSample,
+      vulnerabilities: [
+        {
+          id: "CVE-2025-12345",
+          published: "2025-01-03T00:00:00Z",
+          ratings: [{ severity: "high" }],
+          affects: [{ ref: "pkg:npm/example-lib@1.2.3" }],
+        },
+        {
+          id: "CVE-2025-54321",
+          ratings: [{ severity: "medium" }],
+          affects: [{ ref: "example-lib-ref" }],
+        },
+      ],
+    });
+
+    expect(sbom.vulnerabilities).toEqual([
+      {
+        id: "CVE-2025-12345",
+        severity: "HIGH",
+        publishedDate: "2025-01-03",
+        affectedComponentIds: ["example-lib-ref"],
+      },
+      {
+        id: "CVE-2025-54321",
+        severity: "MEDIUM",
+        publishedDate: null,
+        affectedComponentIds: ["example-lib-ref"],
+      },
+    ]);
+  });
+
+  it("accepts the checked-in vulnerability demo SBOM", () => {
+    const content = readFileSync(
+      new URL("../../../test-sbom-vulnerable.json", import.meta.url),
+      "utf8",
+    );
+    const sbom = parseSbomContent(content);
+
+    expect(sbom.vulnerabilities).toEqual([
+      {
+        id: "CVE-2021-23337",
+        severity: "HIGH",
+        publishedDate: null,
+        affectedComponentIds: ["pkg-npm-lodash-4.17.20"],
+      },
+      {
+        id: "CVE-2022-24999",
+        severity: "HIGH",
+        publishedDate: null,
+        affectedComponentIds: ["pkg-npm-qs-6.10.2"],
+      },
+      {
+        id: "CVE-2024-29041",
+        severity: "MEDIUM",
+        publishedDate: "2024-03-25",
+        affectedComponentIds: ["pkg-npm-express-4.18.2"],
+      },
+    ]);
+  });
+
+  it("rejects unsupported vulnerability severities and unknown affected components", () => {
+    expectValidationError(
+      () =>
+        parseSample({
+          ...cycloneDxSample,
+          vulnerabilities: [
+            {
+              id: "CVE-2025-12345",
+              ratings: [{ severity: "info" }],
+              affects: [{ ref: "example-lib-ref" }],
+            },
+          ],
+        }),
+      "invalid_document",
+      "must include a LOW, MEDIUM, HIGH, or CRITICAL severity",
+    );
+    expectValidationError(
+      () =>
+        parseSample({
+          ...cycloneDxSample,
+          vulnerabilities: [
+            {
+              id: "CVE-2025-12345",
+              ratings: [{ severity: "high" }],
+              affects: [{ ref: "missing-component" }],
+            },
+          ],
+        }),
+      "invalid_vulnerability_reference",
+      'unknown component identifier "missing-component"',
+    );
+  });
+
+  it("does not interpret SPDX vulnerability-shaped extension data", () => {
+    const sbom = parseSample({
+      ...spdxSample,
+      vulnerabilities: [
+        {
+          id: "CVE-2025-12345",
+          ratings: [{ severity: "high" }],
+          affects: [{ ref: "SPDXRef-Example" }],
+        },
+      ],
+    });
+
+    expect(sbom.vulnerabilities).toEqual([]);
   });
 
   it("normalizes SPDX document metadata, package identifiers and dependencies", () => {

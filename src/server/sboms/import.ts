@@ -18,6 +18,10 @@ import {
   type NormalizedSbom,
   type SbomPackage,
 } from "@/server/sbom-parser";
+import {
+  addVulnerabilityAffectedVersionInTransaction,
+  ensureVulnerabilityInTransaction,
+} from "@/server/vulnerabilities";
 import { inTransaction } from "@/server/database";
 import {
   createSbomInTransaction,
@@ -26,6 +30,7 @@ import {
 
 const MAX_PACKAGES = 2_500;
 const MAX_DEPENDENCIES = 10_000;
+const MAX_VULNERABILITIES = 2_500;
 const UNKNOWN_VERSION = "UNKNOWN";
 
 interface ApplicationIdRow extends RowDataPacket {
@@ -51,6 +56,7 @@ export interface SbomImportResult {
   packageCount: number;
   componentVersionCount: number;
   dependencyCount: number;
+  vulnerabilityCount: number;
   createdApplication: boolean;
   createdComponentCount: number;
   reusedComponentCount: number;
@@ -99,6 +105,13 @@ function validateImportSize(sbom: NormalizedSbom): void {
       "invalid_document",
       "$.dependencies",
       `SBOM may contain at most ${MAX_DEPENDENCIES} dependency relationships.`,
+    );
+  }
+  if (sbom.vulnerabilities.length > MAX_VULNERABILITIES) {
+    throw new SbomValidationError(
+      "invalid_document",
+      "$.vulnerabilities",
+      `SBOM may contain at most ${MAX_VULNERABILITIES} vulnerabilities.`,
     );
   }
 }
@@ -244,6 +257,17 @@ async function persistParsedSbom(
         "A dependency references the application package, but that package is not available for versioned persistence.",
       );
     }
+    for (const vulnerability of sbom.vulnerabilities) {
+      for (const componentId of vulnerability.affectedComponentIds) {
+        if (!packagesById.has(componentId)) {
+          throw new SbomValidationError(
+            "invalid_vulnerability_reference",
+            "$.vulnerabilities",
+            `Vulnerability "${vulnerability.id}" references a component that is not available for versioned persistence.`,
+          );
+        }
+      }
+    }
   }
 
   return inTransaction(async (connection) => {
@@ -358,6 +382,32 @@ async function persistParsedSbom(
       });
     }
 
+    for (const vulnerability of sbom.vulnerabilities) {
+      const vulnerabilityId = await ensureVulnerabilityInTransaction(
+        connection,
+        {
+          cveId: vulnerability.id,
+          severity: vulnerability.severity,
+          publishedDate: vulnerability.publishedDate,
+        },
+      );
+      for (const componentId of vulnerability.affectedComponentIds) {
+        const componentVersionId = versionIds.get(componentId);
+        if (!componentVersionId) {
+          throw new SbomValidationError(
+            "invalid_vulnerability_reference",
+            "$.vulnerabilities",
+            `Vulnerability "${vulnerability.id}" could not be mapped to a persisted component version.`,
+          );
+        }
+        await addVulnerabilityAffectedVersionInTransaction(
+          connection,
+          componentVersionId,
+          vulnerabilityId,
+        );
+      }
+    }
+
     const generatedAt = sbom.metadata.createdAt
       ? new Date(sbom.metadata.createdAt)
       : undefined;
@@ -386,6 +436,7 @@ async function persistParsedSbom(
       packageCount: packages.length,
       componentVersionCount: new Set(versionIds.values()).size,
       dependencyCount: mappedDependencies.size,
+      vulnerabilityCount: sbom.vulnerabilities.length,
       createdApplication: application.created,
       createdComponentCount,
       reusedComponentCount,

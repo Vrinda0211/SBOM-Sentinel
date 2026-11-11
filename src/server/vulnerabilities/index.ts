@@ -2,6 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
+import type { PoolConnection } from "mysql2/promise";
 import { getMySqlPool } from "@/lib/mysql";
 import {
   inTransaction,
@@ -59,8 +60,104 @@ export interface AffectedApplication extends RowDataPacket {
   description: string | null;
 }
 
+export interface ImportedVulnerability {
+  cveId: string;
+  severity: VulnerabilitySeverity;
+  publishedDate: string | null;
+}
+
+interface VulnerabilityIdentityRow extends RowDataPacket {
+  vulnerability_id: string;
+  severity: VulnerabilitySeverity;
+  published_date: string | null;
+}
+
+type SqlExecutor = Pick<PoolConnection, "execute">;
+
+export class VulnerabilityImportConflictError extends Error {
+  constructor(cveId: string, existingSeverity: string, importedSeverity: string) {
+    super(
+      `${cveId} is already stored with ${existingSeverity} severity and cannot be imported as ${importedSeverity}.`,
+    );
+    this.name = "VulnerabilityImportConflictError";
+  }
+}
+
 function isSeverity(value: string): value is VulnerabilitySeverity {
   return ["LOW", "MEDIUM", "HIGH", "CRITICAL"].includes(value);
+}
+
+function validateImportedVulnerability(input: ImportedVulnerability): void {
+  if (
+    typeof input.cveId !== "string" ||
+    input.cveId.trim().length === 0 ||
+    input.cveId.length > 50
+  ) {
+    throw new TypeError("CVE ID must contain 1 to 50 characters.");
+  }
+  if (!isSeverity(input.severity)) {
+    throw new TypeError("Severity must be LOW, MEDIUM, HIGH, or CRITICAL.");
+  }
+  requireIsoDate(input.publishedDate, "Published date");
+}
+
+export async function ensureVulnerabilityInTransaction(
+  connection: SqlExecutor,
+  input: ImportedVulnerability,
+): Promise<string> {
+  validateImportedVulnerability(input);
+  const cveId = input.cveId.trim();
+  const candidateId = randomUUID();
+  await connection.execute<ResultSetHeader>(
+    `INSERT INTO VULNERABILITY
+       (vulnerability_id, cve_id, severity, published_date)
+     VALUES (?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE cve_id = VALUES(cve_id)`,
+    [candidateId, cveId, input.severity, input.publishedDate],
+  );
+  const [rows] = await connection.execute<VulnerabilityIdentityRow[]>(
+    `SELECT vulnerability_id, severity, published_date
+     FROM VULNERABILITY
+     WHERE cve_id = ?
+     FOR UPDATE`,
+    [cveId],
+  );
+  const vulnerability = rows[0];
+  if (!vulnerability) {
+    throw new Error(`Failed to retrieve imported vulnerability ${cveId}.`);
+  }
+  if (vulnerability.severity !== input.severity) {
+    throw new VulnerabilityImportConflictError(
+      cveId,
+      vulnerability.severity,
+      input.severity,
+    );
+  }
+  if (vulnerability.published_date == null && input.publishedDate !== null) {
+    await connection.execute<ResultSetHeader>(
+      `UPDATE VULNERABILITY
+       SET published_date = ?
+       WHERE vulnerability_id = ? AND published_date IS NULL`,
+      [input.publishedDate, vulnerability.vulnerability_id],
+    );
+  }
+  return vulnerability.vulnerability_id;
+}
+
+export async function addVulnerabilityAffectedVersionInTransaction(
+  connection: SqlExecutor,
+  componentVersionId: string,
+  vulnerabilityId: string,
+): Promise<void> {
+  requireUuid(componentVersionId, "Component version ID");
+  requireUuid(vulnerabilityId, "Vulnerability ID");
+  await connection.execute<ResultSetHeader>(
+    `INSERT INTO COMPONENT_VERSION_VULNERABILITY
+       (component_version_id, vulnerability_id, identified_date)
+     VALUES (?, ?, CURRENT_DATE)
+     ON DUPLICATE KEY UPDATE vulnerability_id = VALUES(vulnerability_id)`,
+    [componentVersionId, vulnerabilityId],
+  );
 }
 
 export async function createVulnerability(
@@ -138,7 +235,7 @@ export async function listVulnerabilityFindings(): Promise<
   VulnerabilityFinding[]
 > {
   const [rows] = await getMySqlPool().execute<VulnerabilityFinding[]>(
-    `SELECT
+    `SELECT DISTINCT
        f.vulnerability_id,
        f.cve_id,
        f.severity,

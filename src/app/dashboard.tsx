@@ -513,7 +513,8 @@ export default function Dashboard({
                   {uploadResult.imported.format} ·{" "}
                   {uploadResult.imported.componentVersionCount} component
                   versions · {uploadResult.imported.dependencyCount} dependency
-                  edges · SBOM ID {uploadResult.imported.sbomId}
+                  edges · {uploadResult.imported.vulnerabilityCount} findings ·
+                  SBOM ID {uploadResult.imported.sbomId}
                 </p>
               )}
               {uploadResult.ok && !uploadResult.graphSynced && (
