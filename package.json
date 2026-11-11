@@ -11,12 +11,14 @@
     "db:generate": "prisma generate",
     "db:init": "node scripts/init-mysql.mjs",
     "db:seed": "node scripts/seed-mysql.mjs",
+    "db:seed:auth": "node scripts/seed-auth.mjs",
     "test:mysql:live": "node scripts/require-mysql-env.mjs && vitest run src/server/mysql-live.integration.test.ts",
     "test": "vitest run"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.1",
     "@prisma/client": "^7.10.1",
+    "bcryptjs": "^3.0.3",
     "mysql2": "^3.24.6",
     "neo4j-driver": "^6.2.0",
     "next": "16.4.3",

@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => {
     listVulnerabilityFindings: vi.fn(),
     revalidatePath: vi.fn(),
     requireUuid: vi.fn((value: string) => value),
+    requireAuthenticatedUser: vi.fn(),
+    requireRole: vi.fn(),
     synchronizeSbomGraph: vi.fn(),
   };
 });
@@ -29,6 +31,10 @@ const mocks = vi.hoisted(() => {
 vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("@/server/database", () => ({ requireUuid: mocks.requireUuid }));
+vi.mock("@/server/auth", () => ({
+  requireAuthenticatedUser: mocks.requireAuthenticatedUser,
+  requireRole: mocks.requireRole,
+}));
 vi.mock("@/server/applications", () => ({
   getApplication: mocks.getApplication,
   listApplications: mocks.listApplications,
@@ -64,6 +70,7 @@ vi.mock("@/server/vulnerabilities", () => ({
 }));
 
 import {
+  loadDashboardDataAction,
   retrySbomGraphSyncAction,
   uploadSbomAction,
 } from "./actions";
@@ -103,11 +110,25 @@ describe("SBOM upload and synchronization actions", () => {
       mocks.listVulnerabilityFindings,
       mocks.revalidatePath,
       mocks.requireUuid,
+      mocks.requireAuthenticatedUser,
+      mocks.requireRole,
       mocks.synchronizeSbomGraph,
     ]) {
       mock.mockReset();
     }
     mocks.requireUuid.mockImplementation((value: string) => value);
+    mocks.requireAuthenticatedUser.mockResolvedValue({
+      userId: "user-id",
+      username: "admin",
+      email: "admin@example.test",
+      role: "Admin",
+    });
+    mocks.requireRole.mockResolvedValue({
+      userId: "user-id",
+      username: "admin",
+      email: "admin@example.test",
+      role: "Admin",
+    });
     mocks.importSbomContent.mockResolvedValue({
       applicationId,
       sbomId,
@@ -172,6 +193,31 @@ describe("SBOM upload and synchronization actions", () => {
     });
     expect(result.ok && result.message).toContain("Retry synchronization");
     expect(JSON.stringify(result)).not.toContain("database.internal");
+    expect(mocks.requireRole).toHaveBeenCalledWith("Admin");
+  });
+
+  it("blocks a viewer who directly invokes the upload server action", async () => {
+    mocks.requireRole.mockRejectedValueOnce(
+      new Error("You do not have permission to perform this action."),
+    );
+
+    await expect(uploadSbomAction(uploadForm())).rejects.toThrow(
+      "You do not have permission",
+    );
+
+    expect(mocks.importSbomContent).not.toHaveBeenCalled();
+  });
+
+  it("requires a session before returning dashboard records", async () => {
+    mocks.requireAuthenticatedUser.mockRejectedValueOnce(
+      new Error("Unauthenticated"),
+    );
+
+    await expect(loadDashboardDataAction()).rejects.toThrow("Unauthenticated");
+
+    expect(mocks.listApplications).not.toHaveBeenCalled();
+    expect(mocks.listComponents).not.toHaveBeenCalled();
+    expect(mocks.listVulnerabilityFindings).not.toHaveBeenCalled();
   });
 
   it("returns a safe retry error when Neo4j is unavailable", async () => {
@@ -186,5 +232,6 @@ describe("SBOM upload and synchronization actions", () => {
       error: "Graph synchronization failed. Check Neo4j connectivity and retry.",
     });
     expect(JSON.stringify(result)).not.toContain("database.internal");
+    expect(mocks.requireRole).toHaveBeenCalledWith("Admin");
   });
 });

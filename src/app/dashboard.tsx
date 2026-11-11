@@ -9,6 +9,7 @@ import {
   retrySbomGraphSyncAction,
   uploadSbomAction,
 } from "./actions";
+import { logoutAction } from "./auth-actions";
 
 type DashboardData = Awaited<ReturnType<typeof loadDashboardDataAction>>;
 type ApplicationSboms = Awaited<ReturnType<typeof loadApplicationSbomsAction>>;
@@ -17,6 +18,10 @@ type UploadResult = Awaited<ReturnType<typeof uploadSbomAction>>;
 type Analysis = Awaited<ReturnType<typeof analyzeDependenciesAction>>;
 
 interface DashboardProps {
+  currentUser: {
+    username: string;
+    role: "Admin" | "Viewer";
+  };
   initialData: DashboardData | null;
   initialError: string | null;
 }
@@ -197,6 +202,7 @@ function GraphVisualization({
 }
 
 export default function Dashboard({
+  currentUser,
   initialData,
   initialError,
 }: DashboardProps) {
@@ -377,9 +383,23 @@ export default function Dashboard({
               Software supply-chain intelligence
             </p>
           </div>
-          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-900">
-            MySQL source of truth · Neo4j dependency graph
-          </span>
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-900">
+              MySQL source of truth · Neo4j dependency graph
+            </span>
+            <p className="text-right text-sm text-slate-700">
+              <span className="font-semibold">{currentUser.username}</span>
+              <span className="ml-2 text-slate-500">· {currentUser.role}</span>
+            </p>
+            <form action={logoutAction}>
+              <button
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                type="submit"
+              >
+                Log out
+              </button>
+            </form>
+          </div>
         </div>
       </header>
 
@@ -434,104 +454,109 @@ export default function Dashboard({
           ))}
         </section>
 
-        <section aria-labelledby="upload-heading" className={panelClass}>
-          <h2 className="text-lg font-semibold text-slate-950" id="upload-heading">
-            Upload an SBOM
-          </h2>
-          <p className="mt-1 text-sm text-slate-600">
-            JSON only, up to 5 MB. Relational import is transactional; Neo4j
-            synchronization can be retried if the graph service is unavailable.
-          </p>
-          <form
-            className="mt-4 grid gap-4 md:grid-cols-[1fr_1fr_auto]"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const form = event.currentTarget;
-              const formData = new FormData(form);
-              const file = formData.get("sbomFile");
-              if (!(file instanceof File) || file.size === 0) {
-                setUploadResult({
-                  ok: false,
-                  error: "Choose a non-empty JSON SBOM file.",
-                });
-                return;
-              }
-              if (file.size > 5 * 1024 * 1024) {
-                setUploadResult({
-                  ok: false,
-                  error: "SBOM files must not exceed 5 MB.",
-                });
-                return;
-              }
-              submitUpload(formData);
-              form.reset();
-            }}
-          >
-            <label className="text-sm font-medium text-slate-700">
-              SBOM file
-              <input
-                accept=".json,application/json"
-                className={fieldClass}
-                name="sbomFile"
-                required
-                type="file"
-              />
-            </label>
-            <label className="text-sm font-medium text-slate-700">
-              Optional application name override
-              <input
-                className={fieldClass}
-                maxLength={255}
-                name="applicationName"
-                placeholder="Application name"
-                type="text"
-              />
-            </label>
-            <button
-              className="self-end rounded-lg bg-emerald-800 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-900 disabled:cursor-wait disabled:opacity-60"
-              disabled={isPending}
-              type="submit"
+        {currentUser.role === "Admin" && (
+          <section aria-labelledby="upload-heading" className={panelClass}>
+            <h2
+              className="text-lg font-semibold text-slate-950"
+              id="upload-heading"
             >
-              {isPending ? "Processing…" : "Import SBOM"}
-            </button>
-          </form>
+              Upload an SBOM
+            </h2>
+            <p className="mt-1 text-sm text-slate-600">
+              JSON only, up to 5 MB. Relational import is transactional; Neo4j
+              synchronization can be retried if the graph service is unavailable.
+            </p>
+            <form
+              className="mt-4 grid gap-4 md:grid-cols-[1fr_1fr_auto]"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const form = event.currentTarget;
+                const formData = new FormData(form);
+                const file = formData.get("sbomFile");
+                if (!(file instanceof File) || file.size === 0) {
+                  setUploadResult({
+                    ok: false,
+                    error: "Choose a non-empty JSON SBOM file.",
+                  });
+                  return;
+                }
+                if (file.size > 5 * 1024 * 1024) {
+                  setUploadResult({
+                    ok: false,
+                    error: "SBOM files must not exceed 5 MB.",
+                  });
+                  return;
+                }
+                submitUpload(formData);
+                form.reset();
+              }}
+            >
+              <label className="text-sm font-medium text-slate-700">
+                SBOM file
+                <input
+                  accept=".json,application/json"
+                  className={fieldClass}
+                  name="sbomFile"
+                  required
+                  type="file"
+                />
+              </label>
+              <label className="text-sm font-medium text-slate-700">
+                Optional application name override
+                <input
+                  className={fieldClass}
+                  maxLength={255}
+                  name="applicationName"
+                  placeholder="Application name"
+                  type="text"
+                />
+              </label>
+              <button
+                className="self-end rounded-lg bg-emerald-800 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-900 disabled:cursor-wait disabled:opacity-60"
+                disabled={isPending}
+                type="submit"
+              >
+                {isPending ? "Processing…" : "Import SBOM"}
+              </button>
+            </form>
 
-          {uploadResult && (
-            <div
-              className={`mt-4 rounded-lg border p-4 text-sm ${
-                uploadResult.ok
-                  ? "border-emerald-200 bg-emerald-50 text-emerald-950"
-                  : "border-red-200 bg-red-50 text-red-900"
-              }`}
-              role={uploadResult.ok ? "status" : "alert"}
-            >
-              <p className="font-semibold">
-                {uploadResult.ok ? uploadResult.message : uploadResult.error}
-              </p>
-              {uploadResult.ok && (
-                <p className="mt-1">
-                  {uploadResult.imported.format} ·{" "}
-                  {uploadResult.imported.componentVersionCount} component
-                  versions · {uploadResult.imported.dependencyCount} dependency
-                  edges · {uploadResult.imported.vulnerabilityCount} findings ·
-                  SBOM ID {uploadResult.imported.sbomId}
+            {uploadResult && (
+              <div
+                className={`mt-4 rounded-lg border p-4 text-sm ${
+                  uploadResult.ok
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+                    : "border-red-200 bg-red-50 text-red-900"
+                }`}
+                role={uploadResult.ok ? "status" : "alert"}
+              >
+                <p className="font-semibold">
+                  {uploadResult.ok ? uploadResult.message : uploadResult.error}
                 </p>
-              )}
-              {uploadResult.ok && !uploadResult.graphSynced && (
-                <button
-                  className="mt-3 rounded-md border border-emerald-800 px-3 py-1.5 font-semibold hover:bg-emerald-100"
-                  disabled={isPending}
-                  onClick={() =>
-                    retryGraphSync(uploadResult.imported.sbomId)
-                  }
-                  type="button"
-                >
-                  Retry Neo4j synchronization
-                </button>
-              )}
-            </div>
-          )}
-        </section>
+                {uploadResult.ok && (
+                  <p className="mt-1">
+                    {uploadResult.imported.format} ·{" "}
+                    {uploadResult.imported.componentVersionCount} component
+                    versions · {uploadResult.imported.dependencyCount} dependency
+                    edges · {uploadResult.imported.vulnerabilityCount} findings ·
+                    SBOM ID {uploadResult.imported.sbomId}
+                  </p>
+                )}
+                {uploadResult.ok && !uploadResult.graphSynced && (
+                  <button
+                    className="mt-3 rounded-md border border-emerald-800 px-3 py-1.5 font-semibold hover:bg-emerald-100"
+                    disabled={isPending}
+                    onClick={() =>
+                      retryGraphSync(uploadResult.imported.sbomId)
+                    }
+                    type="button"
+                  >
+                    Retry Neo4j synchronization
+                  </button>
+                )}
+              </div>
+            )}
+          </section>
+        )}
 
         <section aria-labelledby="applications-heading" className={panelClass}>
           <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
@@ -694,14 +719,16 @@ export default function Dashboard({
                   {details.graphError}
                 </p>
               )}
-              <button
-                className="mt-3 rounded-lg border border-emerald-800 px-4 py-2 text-sm font-semibold text-emerald-900 hover:bg-emerald-50 disabled:opacity-50"
-                disabled={isPending}
-                onClick={() => retryGraphSync()}
-                type="button"
-              >
-                Synchronize graph from MySQL
-              </button>
+              {currentUser.role === "Admin" && (
+                <button
+                  className="mt-3 rounded-lg border border-emerald-800 px-4 py-2 text-sm font-semibold text-emerald-900 hover:bg-emerald-50 disabled:opacity-50"
+                  disabled={isPending}
+                  onClick={() => retryGraphSync()}
+                  type="button"
+                >
+                  Synchronize graph from MySQL
+                </button>
+              )}
               <GraphVisualization
                 details={details}
                 onSelect={setSelectedVersionId}

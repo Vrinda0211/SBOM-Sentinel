@@ -1,10 +1,16 @@
 import { Suspense } from "react";
 import { connection } from "next/server";
+import { redirect } from "next/navigation";
 import Dashboard from "./dashboard";
 import { loadDashboardDataAction } from "./actions";
+import { getCurrentUser } from "@/server/auth";
 
 async function DashboardContent() {
   await connection();
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    redirect("/login");
+  }
 
   let initialData: Awaited<ReturnType<typeof loadDashboardDataAction>> | null =
     null;
@@ -15,7 +21,16 @@ async function DashboardContent() {
     initialError =
       "The database query failed. Check that MySQL is configured and available.";
   }
-  return <Dashboard initialData={initialData} initialError={initialError} />;
+  return (
+    <Dashboard
+      currentUser={{
+        username: currentUser.username,
+        role: currentUser.role,
+      }}
+      initialData={initialData}
+      initialError={initialError}
+    />
+  );
 }
 
 function DashboardLoading() {

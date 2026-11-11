@@ -35,7 +35,7 @@ try {
 
 const pool = createPool({ ...config, database, multipleStatements: false });
 try {
-  for (const filename of ["schema.sql", "views.sql"]) {
+  for (const filename of ["schema.sql", "views.sql", "auth-schema.sql"]) {
     const sql = await readFile(
       fileURLToPath(new URL(`../database/mysql/${filename}`, import.meta.url)),
       "utf8",

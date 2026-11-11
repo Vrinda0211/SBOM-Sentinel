@@ -39,6 +39,8 @@ notepad .env
 npm ci
 npm run db:init
 npm run db:seed
+# Set the AUTH_* values in .env, then create the local Admin and Viewer accounts
+npm run db:seed:auth
 npm run dev
 ```
 
@@ -60,6 +62,29 @@ create the database when it does not yet exist.
 `npm run db:seed` loads repeatable local sample applications, SBOMs,
 components, versions, licenses, and vulnerability findings from
 `database/mysql/seed.sql`. It makes no external API calls.
+
+### Login and roles
+
+The login page accepts a username or email and a password. Configure the six
+`AUTH_ADMIN_*` and `AUTH_VIEWER_*` values in your ignored local `.env`, then
+run `npm run db:seed:auth` to create or update the two local accounts. The
+`.env.example` labels the demo accounts `demo-admin` and `demo-viewer`; their
+passwords are local values that must be chosen by the evaluator and are never
+stored in the repository. Passwords must be 12-72 UTF-8 bytes and are stored
+as bcrypt hashes.
+
+`npm run db:init` creates the authentication-only `APP_USER` and `APP_SESSION`
+tables without altering the SBOM schema. The browser receives a random
+HTTP-only, SameSite=Lax session token; MySQL stores only its SHA-256 hash and
+an eight-hour expiry. Production cookies are Secure. Logout deletes the server
+session and clears the cookie. Existing data and protected server actions are
+available only to signed-in users. Both roles can view dashboard and graph
+data; only Admin can upload SBOMs or synchronize Neo4j, and those server
+actions check the role directly. No application delete action currently exists.
+
+For role checks, sign in with the locally configured `demo-admin` or
+`demo-viewer` account (or their configured email) and corresponding password.
+The viewer cannot access write operations by manually invoking a server action.
 
 ### Local Neo4j
 

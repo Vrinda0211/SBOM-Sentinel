@@ -32,6 +32,10 @@ import {
   listSbomsForApplication,
 } from "@/server/sboms";
 import { listVulnerabilityFindings } from "@/server/vulnerabilities";
+import {
+  requireAuthenticatedUser,
+  requireRole,
+} from "@/server/auth";
 
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 const UUID_PATTERN =
@@ -74,6 +78,7 @@ function serializeImportResult(result: SbomImportResult) {
 }
 
 export async function uploadSbomAction(formData: FormData) {
+  await requireRole("Admin");
   const fileValue = formData.get("sbomFile");
   if (typeof File === "undefined" || !(fileValue instanceof File)) {
     return { ok: false as const, error: "Choose a JSON SBOM file to upload." };
@@ -150,6 +155,7 @@ export async function uploadSbomAction(formData: FormData) {
 }
 
 export async function retrySbomGraphSyncAction(sbomId: string) {
+  await requireRole("Admin");
   if (!UUID_PATTERN.test(sbomId)) {
     return { ok: false as const, error: "SBOM ID must be a UUID." };
   }
@@ -166,6 +172,7 @@ export async function retrySbomGraphSyncAction(sbomId: string) {
 }
 
 export async function loadDashboardDataAction() {
+  await requireAuthenticatedUser();
   const [applications, components, findings] = await Promise.all([
     listApplications(),
     listComponents(),
@@ -201,6 +208,7 @@ export async function loadDashboardDataAction() {
 }
 
 export async function loadApplicationSbomsAction(applicationId: string) {
+  await requireAuthenticatedUser();
   requireUuid(applicationId, "Application ID");
   const [application, sboms] = await Promise.all([
     getApplication(applicationId),
@@ -225,6 +233,7 @@ export async function loadApplicationSbomsAction(applicationId: string) {
 }
 
 export async function loadSbomDetailsAction(sbomId: string) {
+  await requireAuthenticatedUser();
   requireUuid(sbomId, "SBOM ID");
   const [sbom, graphData] = await Promise.all([
     getSbomSyncRecord(sbomId),
@@ -314,6 +323,7 @@ export async function analyzeDependenciesAction(
   componentVersionId: string,
   targetComponentVersionId?: string,
 ) {
+  await requireAuthenticatedUser();
   requireUuid(componentVersionId, "Component version ID");
   if (
     targetComponentVersionId &&
